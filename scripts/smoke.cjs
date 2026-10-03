@@ -83,6 +83,10 @@ child.on('exit', code => {
   if (code !== 0 || !output.includes(`Renderer smoke: passed v${expectedVersion}`) || (rollback && !diagnostics.includes('restoring the previous version'))) {
     console.error('Renderer smoke failed:', code);
     console.error(diagnostics);
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      const summary = `expected=v${expectedVersion}; exit=${code}; stdout=${output.slice(-2000)}; diagnostics=${diagnostics.slice(-3500)}`;
+      console.error('::error title=Electron smoke diagnostics::' + summary.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A'));
+    }
     process.exitCode = 1;
   } else console.log('Demo screenshot:', path.join(directory, 'demo.png'));
 });
