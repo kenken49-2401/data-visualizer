@@ -9,7 +9,7 @@ const REPOSITORY = 'kenken49-2401/data-visualizer';
 const BASE = `https://raw.githubusercontent.com/${REPOSITORY}/main/`;
 const FILES = ['package.json', 'package-lock.json', 'launcher.cjs', 'start.cmd', 'README.md',
   'src/main.cjs', 'src/preload.cjs', 'src/usage.cjs', 'src/codex-client.cjs', 'src/usage-service.cjs',
-  'src/settings.cjs', 'src/position.cjs', 'src/updater.cjs', 'src/windows-tracker.ps1',
+  'src/settings.cjs', 'src/position.cjs', 'src/updater.cjs', 'src/document-origin.cjs', 'src/windows-tracker.ps1',
   'src/ui/index.html', 'src/ui/style.css', 'src/ui/renderer.js', 'src/ui/tray.png'];
 function versionParts(value) { return typeof value === 'string' && /^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(value) ? value.split('.').map(Number) : null; }
 function newer(a, b) {

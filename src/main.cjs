@@ -3,7 +3,6 @@ const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, shell, ses
 const { spawn } = require('node:child_process');
 const { readFileSync, mkdirSync, writeFileSync } = require('node:fs');
 const { createInterface } = require('node:readline');
-const { pathToFileURL } = require('node:url');
 const path = require('node:path');
 const { CodexClient } = require('./codex-client.cjs');
 const { UsageService } = require('./usage-service.cjs');
@@ -11,6 +10,7 @@ const { demoUsage, publicError } = require('./usage.cjs');
 const { bottomLeft, keepOnScreen } = require('./position.cjs');
 const { SettingsStore, SIZES } = require('./settings.cjs');
 const { UpdateManager } = require('./updater.cjs');
+const { matchesDocument } = require('./document-origin.cjs');
 const version = require('../package.json').version;
 const demo = process.argv.includes('--demo');
 const smoke = process.argv.includes('--smoke');
@@ -21,7 +21,7 @@ if (process.env.CODEX_USAGE_RUNTIME_DIR) {
   app.setPath('sessionData', path.join(process.env.CODEX_USAGE_RUNTIME_DIR, 'session'));
 }
 if (smoke) app.commandLine.appendSwitch('disable-gpu');
-const pageUrl = pathToFileURL(path.join(__dirname, 'ui', 'index.html')).href;
+const pageFile = path.join(__dirname, 'ui', 'index.html');
 let window, tray, tracker, service, client, store, updater, savePositionTimer, loginTimer;
 let settings, tracked = null, trackerFailed = false;
 let loginPending = false, loginId = null, userHidden = false, userMinimized = false;
@@ -164,7 +164,12 @@ function startTracker() {
   });
   tracker.stdin.end(`$usageOverlayOwnerId = ${process.pid}\n` + readFileSync(path.join(__dirname, 'windows-tracker.ps1'), 'utf8') + '\n');
 }
-function guard(event) { if (event.sender !== window?.webContents || event.senderFrame?.url !== pageUrl) throw new Error('Unexpected sender'); }
+function guard(event) {
+  const frame = event.senderFrame;
+  const mainFrame = window?.webContents.mainFrame;
+  if (event.sender !== window?.webContents || !frame || !mainFrame || frame.processId !== mainFrame.processId ||
+      frame.routingId !== mainFrame.routingId || !matchesDocument(frame.url, pageFile)) throw new Error('Unexpected sender');
+}
 async function smokeCheck() {
   const wait = () => new Promise(resolve => setTimeout(resolve, 120));
   for (const size of ['compact', 'tiny', 'comfortable']) {
