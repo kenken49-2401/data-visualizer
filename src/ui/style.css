@@ -1,0 +1,29 @@
+:root { color-scheme: dark; font: 12px "Segoe UI", "Yu Gothic UI", sans-serif; color: #dfe9e7; background: #10191b; }
+* { box-sizing: border-box; }
+body { margin: 0; overflow: hidden; }
+main { padding: 14px 16px 10px; border: 1px solid #2c3c3d; height: 100vh; }
+header, .brand, .quota-heading, footer, .actions { display: flex; align-items: center; }
+header, .quota-heading, footer { justify-content: space-between; }
+.brand { gap: 8px; font-weight: 650; font-size: 14px; }
+.brand small { font-size: 11px; color: #a0b6b3; margin-left: 5px; font-weight: 400; }
+.mark { display: grid; place-items: center; width: 23px; height: 23px; background: #b9edce; color: #12261b; border-radius: 7px; font-weight: 800; }
+button { border: 1px solid #35494a; border-radius: 5px; color: #c9dfd9; background: #182628; padding: 3px 7px; font: inherit; cursor: pointer; }
+button:hover { background: #2a4141; }
+button:focus-visible { outline: 2px solid #b9edce; outline-offset: 2px; }
+button:disabled { opacity: .5; cursor: default; }
+.icon { background: transparent; border: 0; font-size: 18px; padding: 0 3px; color: #8aa19c; }
+#status { margin: 8px 0 11px; font-size: 10px; line-height: 14px; color: #96ada7; height: 28px; overflow: hidden; }
+body[data-status="error"] #status, body[data-status="stale"] #status { color: #e3bc7c; }
+body[data-status="demo"] #status { color: #9ed1e9; }
+.quota + .quota { margin-top: 12px; }
+.quota-heading { margin-bottom: 5px; font-size: 11px; }
+.value { font-size: 17px; font-variant-numeric: tabular-nums; line-height: 19px; }
+.track { height: 5px; background: #2a393a; border-radius: 3px; overflow: hidden; }
+.fill { width: 0; height: 100%; background: #b9edce; transition: width .3s; }
+.quota[data-level="low"] .fill { background: #e3bc7c; }
+.quota[data-level="empty"] .fill { background: #ef9292; }
+body[data-status="stale"] .fill { opacity: .5; }
+.reset { font-size: 10px; color: #849b96; margin-top: 4px; font-variant-numeric: tabular-nums; }
+footer { margin-top: 12px; border-top: 1px solid #293b3b; padding-top: 7px; font-size: 10px; color: #7e9790; }
+.actions { gap: 5px; }
+[hidden] { display: none !important; }
