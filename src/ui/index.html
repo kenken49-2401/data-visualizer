@@ -10,7 +10,7 @@
 </head>
 <body>
   <main>
-    <header><div class="brand"><span class="mark" aria-hidden="true">C</span><span>Codex <small>残り使用量</small></span></div><button id="quit" class="icon" title="終了" aria-label="終了">×</button></header>
+    <header><div class="brand"><span class="mark" aria-hidden="true">C</span><span>Codex <small>残り使用量</small></span></div><div class="window-actions"><button id="menu" class="icon" title="位置・大きさ・更新の設定" aria-label="設定">⚙</button><button id="minimize" class="icon" title="最小化" aria-label="最小化">−</button><button id="hide" class="icon" title="通知領域に隠す" aria-label="非表示">×</button></div></header>
     <div id="status" role="status" aria-live="polite">使用量を取得中…</div>
     <section class="quota" data-window="fiveHour" aria-label="5時間の利用枠">
       <div class="quota-heading"><span>5時間枠</span><strong class="value">—</strong></div>
@@ -22,7 +22,7 @@
       <div class="track" role="progressbar" aria-label="7日間枠の残り割合" aria-valuemin="0" aria-valuemax="100"><div class="fill"></div></div>
       <div class="reset">リセット時刻：不明</div>
     </section>
-    <footer><span id="placement">画面左下</span><div class="actions"><button id="cancel-login" hidden>中止</button><button id="login" hidden>ログイン</button><button id="refresh" title="使用量を再取得">更新</button><button id="mode" title="表示位置を切り替え">位置</button></div></footer>
+    <footer><span id="placement">画面左下</span><div class="actions"><button id="restart" hidden title="取得済みの改善版を適用">再起動</button><button id="cancel-login" hidden>中止</button><button id="login" hidden>ログイン</button><button id="refresh" title="使用量を再取得">更新</button></div></footer>
   </main>
 </body>
 </html>

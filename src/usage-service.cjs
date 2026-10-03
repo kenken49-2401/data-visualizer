@@ -31,6 +31,13 @@ class UsageService extends EventEmitter {
 
   publish(state) { this.state = state; this.emit('state', state); }
   start() { if (this.running) return; this.running = true; void this.refresh(); }
+  setIntervalMs(intervalMs) {
+    this.intervalMs = intervalMs;
+    if (this.running && !this.inflight) {
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => { void this.refresh(); }, intervalMs);
+    }
+  }
 
   async refresh() {
     if (this.inflight) return this.inflight;

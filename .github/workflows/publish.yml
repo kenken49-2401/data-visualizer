@@ -1,0 +1,49 @@
+name: Verify and publish app updates
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["updates/**", "update.json"]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: publish-main
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run install:electron
+      - run: npm test
+      - name: Validate Windows window tracking helper
+        shell: pwsh
+        run: |
+          $syntaxTokens = $null
+          $syntaxErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("src/windows-tracker.ps1", [ref]$syntaxTokens, [ref]$syntaxErrors)
+          if ($syntaxErrors.Count -gt 0) { throw "PowerShell syntax validation failed" }
+          $source = Get-Content -Raw "src/windows-tracker.ps1"
+          $nativeSource = [regex]::Match($source, "(?s)Add-Type @'\r?\n(.*?)\r?\n'@").Groups[1].Value
+          if (-not $nativeSource) { throw "Window tracking declarations not found" }
+          Add-Type -TypeDefinition $nativeSource
+      - run: npm run smoke
+      - run: npm run smoke -- --launcher
+      - run: npm run smoke -- --staged-update
+      - run: npm run smoke -- --rollback-update
+      - run: npm run publish:update
+      - name: Save verified update data
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add update.json updates
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish verified app update"
+            git push origin HEAD:main
+          fi

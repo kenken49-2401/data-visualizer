@@ -37,6 +37,8 @@ while ($true) {
     }
     [void][UsageWindows]::EnumWindows($callback, [IntPtr]::Zero)
     $foreground = [UsageWindows]::GetForegroundWindow()
+    [uint32]$foregroundOwner = 0
+    [void][UsageWindows]::GetWindowThreadProcessId($foreground, [ref]$foregroundOwner)
     if ($script:targets.Contains($foreground)) { $script:chosen = $foreground }
     elseif (-not $script:targets.Contains($script:chosen)) {
         $script:chosen = if ($script:targets.Count -gt 0) { $script:targets[0] } else { [IntPtr]::Zero }
@@ -47,7 +49,7 @@ while ($true) {
         $valid = [UsageWindows]::DwmGetWindowAttribute($script:chosen, 9, [ref]$rect, 16) -eq 0
         if (-not $valid) { $valid = [UsageWindows]::GetWindowRect($script:chosen, [ref]$rect) }
         if ($valid -and $rect.Right -gt $rect.Left -and $rect.Bottom -gt $rect.Top) {
-            $payload = @{ present = $true; active = ($foreground -eq $script:chosen);
+            $payload = @{ present = $true; active = ($foreground -eq $script:chosen -or $foregroundOwner -eq $usageOverlayOwnerId);
                 minimized = [UsageWindows]::IsIconic($script:chosen);
                 x = $rect.Left; y = $rect.Top; width = $rect.Right - $rect.Left; height = $rect.Bottom - $rect.Top }
         }

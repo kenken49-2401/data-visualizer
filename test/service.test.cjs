@@ -71,3 +71,14 @@ test('does not publish data after shutdown', async () => {
   assert.equal(service.state.usage, null);
   assert.equal(client.closed, true);
 });
+
+test('changing the polling interval replaces the old timer', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const client = new FakeClient(); const service = new UsageService(client);
+  t.after(() => service.stop());
+  service.start(); client.calls[0].resolve(snapshot); await tick();
+  service.setIntervalMs(180000);
+  t.mock.timers.tick(60000); assert.equal(client.calls.length, 1);
+  t.mock.timers.tick(120000); assert.equal(client.calls.length, 2);
+  client.calls[1].resolve(snapshot); await tick();
+});

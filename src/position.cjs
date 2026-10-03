@@ -8,4 +8,11 @@ function bottomLeft(area, size, inset = 14) {
     width: Math.round(width), height: Math.round(height) };
 }
 
-module.exports = { bottomLeft };
+function keepOnScreen(bounds, area) {
+  const width = Math.min(bounds.width, area.width);
+  const height = Math.min(bounds.height, area.height);
+  return { width, height,
+    x: Math.round(Math.min(Math.max(bounds.x, area.x), area.x + area.width - width)),
+    y: Math.round(Math.min(Math.max(bounds.y, area.y), area.y + area.height - height)) };
+}
+module.exports = { bottomLeft, keepOnScreen };

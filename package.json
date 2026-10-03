@@ -1,18 +1,25 @@
 {
   "name": "codex-usage-overlay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Windows overlay for Codex five-hour and weekly usage",
   "main": "src/main.cjs",
-  "engines": { "node": ">=22.12.0" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
-    "start": "electron .",
+    "start": "node launcher.cjs",
     "demo": "electron . --demo",
-    "test": "node --test test/*.test.cjs",
+    "test": "node --test",
     "probe": "node scripts/probe.cjs",
     "smoke": "node scripts/smoke.cjs",
-    "install:electron": "install-electron --no"
+    "install:electron": "install-electron --no",
+    "publish:update": "node scripts/publish-update.cjs"
   },
-  "dependencies": { "@openai/codex": "0.160.0" },
-  "devDependencies": { "electron": "44.5.1" }
+  "dependencies": {
+    "@openai/codex": "0.160.0"
+  },
+  "devDependencies": {
+    "electron": "44.5.1"
+  }
 }

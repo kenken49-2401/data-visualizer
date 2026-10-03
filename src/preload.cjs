@@ -5,7 +5,10 @@ contextBridge.exposeInMainWorld('usageOverlay', {
   refresh: () => ipcRenderer.invoke('usage:refresh'),
   login: () => ipcRenderer.invoke('usage:login'),
   cancelLogin: () => ipcRenderer.invoke('usage:cancel-login'),
-  setMode: mode => ipcRenderer.invoke('usage:mode', mode),
+  hide: () => ipcRenderer.invoke('usage:hide'),
+  minimize: () => ipcRenderer.invoke('usage:minimize'),
+  menu: () => ipcRenderer.invoke('usage:menu'),
+  restart: () => ipcRenderer.invoke('usage:restart'),
   quit: () => ipcRenderer.invoke('usage:quit'),
   subscribe: callback => {
     const listener = (_event, state) => callback(state);
