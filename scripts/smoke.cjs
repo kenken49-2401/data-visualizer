@@ -59,6 +59,10 @@ const display = await prepareDisplay();
 const root = path.dirname(require.resolve('electron/package.json'));
 let executable = path.join(root, 'dist', readFileSync(path.join(root, 'path.txt'), 'utf8').trim());
 const args = ['.', '--demo', '--smoke'];
+if (process.argv.includes('--packaged')) {
+  executable = path.join(project, 'dist', 'win-unpacked', 'Codex Usage Overlay.exe');
+  args.shift();
+}
 // This cloud host cannot run Chromium's SUID sandbox. Only the local demo smoke
 // runner accepts this explicit switch. Normal npm start never disables it.
 if (process.argv.includes('--cloud-no-sandbox')) args.unshift('--no-sandbox');

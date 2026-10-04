@@ -10,11 +10,16 @@ const { demoUsage, publicError } = require('./usage.cjs');
 const { bottomLeft, keepOnScreen } = require('./position.cjs');
 const { SettingsStore, SIZES } = require('./settings.cjs');
 const { UpdateManager } = require('./updater.cjs');
+const { visibleForChatGPT } = require('./visibility.cjs');
+const { InstallerUpdater } = require('./installer-updater.cjs');
 const { matchesDocument } = require('./document-origin.cjs');
 const version = require('../package.json').version;
 const demo = process.argv.includes('--demo');
 const smoke = process.argv.includes('--smoke');
 app.setName('codex-usage-overlay');
+// Keep settings shared with the ZIP version; the product's display name differs.
+app.setPath('userData', path.join(app.getPath('appData'), 'codex-usage-overlay'));
+if (process.platform === 'win32') app.setAppUserModelId('com.kenken49.codex-usage-overlay');
 if (process.env.CODEX_USAGE_RUNTIME_DIR) {
   mkdirSync(process.env.CODEX_USAGE_RUNTIME_DIR, { recursive: true });
   app.setPath('userData', process.env.CODEX_USAGE_RUNTIME_DIR);
@@ -50,12 +55,13 @@ function updateSettings(patch) {
 }
 function place(force = false) {
   if (!window || window.isDestroyed()) return;
+  if (!demo && process.platform === 'win32' && !visibleForChatGPT(settings, tracked, trackerFailed)) { window.hide(); notify(); return; }
   const size = SIZES[settings.size];
   let bounds;
   if (settings.mode === 'manual' && settings.x !== null && settings.y !== null) {
     bounds = { ...size, x: settings.x, y: settings.y };
   } else if (settings.mode === 'follow' && tracked?.present && !trackerFailed) {
-    if (!force && (!tracked.active || tracked.minimized)) { window.hide(); notify(); return; }
+    if (!settings.chatgptOnly && !force && (!tracked.active || tracked.minimized)) { window.hide(); notify(); return; }
     const physical = { x: tracked.x, y: tracked.y, width: tracked.width, height: tracked.height };
     bounds = bottomLeft(screen.screenToDipRect(null, physical), size);
     bounds.x += settings.offsetX; bounds.y += settings.offsetY;
@@ -73,7 +79,7 @@ function minimize() { userMinimized = true; window.setFocusable(true); window.se
 function restore() {
   userHidden = false; userMinimized = false;
   if (window.isMinimized()) window.restore();
-  window.setFocusable(false); window.setSkipTaskbar(true); place(true); window.showInactive(); buildMenu();
+  window.setFocusable(false); window.setSkipTaskbar(true); place(true); buildMenu();
 }
 function nudge(dx, dy) {
   if (settings.mode === 'manual') {
@@ -91,7 +97,7 @@ function contextMenu() {
     { type: 'separator' },
     { label: '表示位置', submenu: [
       { label: '画面左下', type: 'radio', checked: settings.mode === 'screen', click: () => selectMode('screen') },
-      { label: 'ChatGPT / Codex に追従', type: 'radio', enabled: process.platform === 'win32', checked: settings.mode === 'follow', click: () => selectMode('follow') },
+      { label: 'ChatGPT に追従', type: 'radio', enabled: process.platform === 'win32', checked: settings.mode === 'follow', click: () => selectMode('follow') },
       { label: '自由にドラッグ', type: 'radio', checked: settings.mode === 'manual', click: () => selectMode('manual') },
       { type: 'separator' },
       ...[['← 10px', -10, 0], ['→ 10px', 10, 0], ['↑ 10px', 0, -10], ['↓ 10px', 0, 10]].map(([label, dx, dy]) => ({ label, click: () => nudge(dx, dy) })),
@@ -102,6 +108,7 @@ function contextMenu() {
       click: () => { const b = bottomLeft(display.workArea, SIZES[settings.size]); updateSettings({ mode: 'manual', x: b.x, y: b.y }); },
     })) },
     { label: '大きさ', submenu: [['tiny', '最小'], ['compact', 'コンパクト'], ['comfortable', 'ゆったり']].map(([size, label]) => ({ label, type: 'radio', checked: settings.size === size, click: () => updateSettings({ size }) })) },
+    { label: 'ChatGPTが最前面のときだけ表示', type: 'checkbox', checked: settings.chatgptOnly, enabled: process.platform === 'win32', click: item => updateSettings({ chatgptOnly: item.checked }) },
     { label: '最前面に表示', type: 'checkbox', checked: settings.alwaysOnTop, click: item => updateSettings({ alwaysOnTop: item.checked }) },
     { type: 'separator' },
     { label: '使用量の更新間隔', submenu: [60, 120, 180, 300].map(seconds => ({ label: `${seconds / 60}分`, type: 'radio', checked: settings.intervalSeconds === seconds, click: () => updateSettings({ intervalSeconds: seconds }) })) },
@@ -120,6 +127,7 @@ function contextMenu() {
 function buildMenu() { if (tray) tray.setContextMenu(contextMenu()); }
 function restart() {
   if (updater?.state.status !== 'ready') return;
+  if (app.isPackaged) { updater.install(); return; }
   const bootstrap = process.env.CODEX_USAGE_BOOTSTRAP_ROOT || path.join(__dirname, '..');
   const child = spawn(process.execPath, [path.join(bootstrap, 'launcher.cjs'), `--wait-for-pid=${process.pid}`], {
     detached: true, windowsHide: true, stdio: 'ignore', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
@@ -153,13 +161,16 @@ function startTracker() {
   const binary = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   tracker = spawn(binary, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const failed = () => { trackerFailed = true; place(); };
+  let receivedAt = Date.now();
+  const watchdog = setInterval(() => { if (Date.now() - receivedAt > 5000) failed(); }, 1000);
+  tracker.once('exit', () => clearInterval(watchdog));
   tracker.on('error', failed); tracker.on('exit', failed); tracker.stdin.on('error', failed); tracker.stderr.on('data', () => {});
   createInterface({ input: tracker.stdout }).on('line', line => {
     try {
       const value = JSON.parse(line);
       if (typeof value.present !== 'boolean' || typeof value.active !== 'boolean' || typeof value.minimized !== 'boolean') return;
       if (value.present && (!['x', 'y', 'width', 'height'].every(key => Number.isFinite(value[key])) || value.width <= 0 || value.height <= 0)) return;
-      tracked = value; place();
+      receivedAt = Date.now(); trackerFailed = false; tracked = value; place();
     } catch {}
   });
   tracker.stdin.end(`$usageOverlayOwnerId = ${process.pid}\n` + readFileSync(path.join(__dirname, 'windows-tracker.ps1'), 'utf8') + '\n');
@@ -184,6 +195,15 @@ async function smokeCheck() {
     })()`);
     if (!valid) throw new Error(`Renderer layout failed: ${size}`);
   }
+  // Exercise both quotas at the exact boundaries in the actual renderer.
+  for (const [percent, level, color] of [[30.1, 'normal', 'rgb(75, 145, 255)'], [30, 'warning', 'rgb(244, 197, 80)'], [10.1, 'warning', 'rgb(244, 197, 80)'], [10, 'critical', 'rgb(241, 105, 105)'], [0, 'critical', 'rgb(241, 105, 105)']]) {
+    state = { status: 'demo', usage: demoUsage(), updatedAt: Date.now(), error: null };
+    for (const quota of Object.values(state.usage)) { if (quota && typeof quota === 'object' && 'remainingPercent' in quota) quota.remainingPercent = percent; }
+    notify(); await wait();
+    const valid = await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll('.quota')).every(q => q.dataset.level === '${level}' && getComputedStyle(q.querySelector('.fill')).backgroundColor === '${color}')`);
+    if (!valid) throw new Error(`Quota warning color failed: ${percent}`);
+  }
+  state = { status: 'demo', usage: demoUsage(), updatedAt: Date.now(), error: null }; notify();
   updateSettings({ size: 'compact' }); await wait();
   writeFileSync(path.join(app.getPath('userData'), 'demo.png'), (await window.webContents.capturePage()).toPNG());
   state = { status: 'error', usage: null, updatedAt: null, error: { kind: 'auth', text: '同じ Plus アカウントでログインしてください' } };
@@ -196,6 +216,7 @@ async function smokeCheck() {
   if (!userHidden) throw new Error('Hide action failed');
   place(); if (window.isVisible()) throw new Error('Background refresh restored a hidden panel');
   restore();
+  writeFileSync(path.join(app.getPath('userData'), 'smoke-result.json'), JSON.stringify({ version, passed: true }));
   console.log(`Renderer smoke: passed v${version} (three sizes, values, isolation, rounded layout, auth error, stale snapshot, hide/restore)`); app.quit();
 }
 if (!app.requestSingleInstanceLock() && !smoke) app.quit();
@@ -244,7 +265,8 @@ else {
       }
     });
     client.on('disconnected', () => { loginPending = false; loginId = null; clearTimeout(loginTimer); notify(); });
-    updater = new UpdateManager({ currentRoot: path.join(__dirname, '..'), directory: path.join(app.getPath('userData'), 'updates') });
+    updater = app.isPackaged ? new InstallerUpdater(require('electron-updater').autoUpdater, version)
+      : new UpdateManager({ currentRoot: path.join(__dirname, '..'), directory: path.join(app.getPath('userData'), 'updates') });
     updater.on('state', () => { buildMenu(); notify(); });
     if (settings.autoUpdates) updater.start();
     service.start(); startTracker();

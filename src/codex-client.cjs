@@ -18,7 +18,8 @@ function codexExecutable() {
   try {
     if (!target) throw new Error('unsupported platform');
     const root = path.dirname(require.resolve(`@openai/codex-${target[0]}/package.json`));
-    const executable = path.join(root, 'vendor', target[1], 'bin', process.platform === 'win32' ? 'codex.exe' : 'codex');
+    let executable = path.join(root, 'vendor', target[1], 'bin', process.platform === 'win32' ? 'codex.exe' : 'codex');
+    if (executable.includes('app.asar')) executable = executable.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
     if (!existsSync(executable)) throw new Error('missing binary');
     return executable;
   } catch {

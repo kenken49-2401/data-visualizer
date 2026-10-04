@@ -1,6 +1,6 @@
 {
   "name": "codex-usage-overlay",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Windows overlay for Codex five-hour and weekly usage",
   "main": "src/main.cjs",
@@ -14,12 +14,65 @@
     "probe": "node scripts/probe.cjs",
     "smoke": "node scripts/smoke.cjs",
     "install:electron": "install-electron --no",
-    "publish:update": "node scripts/publish-update.cjs"
+    "publish:update": "node scripts/publish-update.cjs",
+    "dist:win": "electron-builder --win nsis --x64 --publish never",
+    "smoke:packaged": "node scripts/smoke.cjs --packaged"
   },
   "dependencies": {
-    "@openai/codex": "0.160.0"
+    "@openai/codex": "0.160.0",
+    "electron-updater": "6.8.9"
   },
   "devDependencies": {
-    "electron": "44.5.1"
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "author": "kenken49-2401",
+  "license": "UNLICENSED",
+  "build": {
+    "appId": "com.kenken49.codex-usage-overlay",
+    "productName": "Codex Usage Overlay",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/@openai/codex-*/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": true,
+      "verifyUpdateCodeSignature": false,
+      "artifactName": "Codex-Usage-Overlay-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Codex Usage Overlay",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "kenken49-2401",
+        "repo": "data-visualizer",
+        "releaseType": "release"
+      }
+    ]
   }
 }

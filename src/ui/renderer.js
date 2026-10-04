@@ -22,7 +22,7 @@ function render(state) {
     const quota = state.usage?.[key];
     section.querySelector('.value').textContent = quota ? `${Math.round(quota.remainingPercent * 10) / 10}%` : '—';
     section.querySelector('.fill').style.width = quota ? `${quota.remainingPercent}%` : '0%';
-    section.dataset.level = quota && quota.remainingPercent <= 0 ? 'empty' : quota && quota.remainingPercent < 20 ? 'low' : 'normal';
+    section.dataset.level = quota && quota.remainingPercent <= 10 ? 'critical' : quota && quota.remainingPercent <= 30 ? 'warning' : 'normal';
     const progress = section.querySelector('.track');
     if (quota) progress.setAttribute('aria-valuenow', String(quota.remainingPercent)); else progress.removeAttribute('aria-valuenow');
     const reset = section.querySelector('.reset');
@@ -38,7 +38,7 @@ function render(state) {
   const placement = document.querySelector('#placement');
   placement.textContent = state.update?.status === 'ready' ? '改善版を受信済み' : state.placement === 'manual' ? '自由位置' : state.placement === 'app' ? 'アプリに追従' : '画面左下';
   const updates = { checking: 'アプリの更新を確認中', downloading: '改善版をダウンロード中', preparing: '改善版の起動を確認中', ready: `改善版 ${state.update?.available} を次回起動時に適用`, error: 'アプリの更新確認に失敗。現在の版を引き続き使用します' };
-  placement.title = [`バージョン ${state.version ?? ''}`, updates[state.update?.status] ?? '', state.settingsError ? '設定を保存できませんでした' : '', state.trackerFailed ? '追従できないため画面左下に表示しています' : ''].filter(Boolean).join('\n');
+  placement.title = [`バージョン ${state.version ?? ''}`, updates[state.update?.status] ?? '', state.settingsError ? '設定を保存できませんでした' : '', state.trackerFailed ? 'ChatGPTの表示状態を確認できません。トレイから設定を変更できます' : ''].filter(Boolean).join('\n');
 }
 window.usageOverlay.subscribe(render);
 window.usageOverlay.getState().then(render);
