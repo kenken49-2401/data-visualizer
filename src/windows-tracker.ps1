@@ -1,4 +1,4 @@
-# Read window geometry and visible menu roles only; never read conversation text or credentials.
+# Read window geometry and foreground process only; never read conversation text or credentials.
 $ErrorActionPreference = 'Stop'
 Add-Type @'
 using System;
@@ -20,24 +20,7 @@ public static class UsageWindows {
 # Match physical DWM coordinates to Electron's explicit physical-to-DIP conversion.
 [void][UsageWindows]::SetProcessDpiAwarenessContext([IntPtr](-4))
 $script:chosen = [IntPtr]::Zero
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-$menuCondition = [System.Windows.Automation.OrCondition]::new(
-    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Menu),
-    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::MenuItem)
-)
 $script:lastActive = $false
-function Test-VisibleMenu($handle) {
-    if ($handle -eq [IntPtr]::Zero) { return $false }
-    try {
-        $root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
-        $items = $root.FindAll([System.Windows.Automation.TreeScope]::Subtree, $menuCondition)
-        foreach ($item in $items) {
-            if (-not $item.Current.IsOffscreen -and -not $item.Current.BoundingRectangle.IsEmpty) { return $true }
-        }
-    } catch { }
-    return $false
-}
 while ($true) {
     $script:targets = [System.Collections.Generic.List[IntPtr]]::new()
     $callback = [UsageWindows+EnumCallback] {
@@ -49,7 +32,7 @@ while ($true) {
                 $owner = Get-Process -Id $ownerId -ErrorAction Stop
                 if ($owner.ProcessName -eq 'ChatGPT') {
                     $candidate = [UsageWindows+Rect]::new()
-                    if ([UsageWindows]::GetWindowRect($handle, [ref]$candidate) -and $candidate.Right - $candidate.Left -ge 400 -and $candidate.Bottom - $candidate.Top -ge 300) { $script:targets.Add($handle) }
+                    if ([UsageWindows]::GetWindowRect($handle, [ref]$candidate) -and $candidate.Right -gt $candidate.Left -and $candidate.Bottom -gt $candidate.Top) { $script:targets.Add($handle) }
                 }
             } catch { }
         }
@@ -63,7 +46,7 @@ while ($true) {
     elseif (-not $script:targets.Contains($script:chosen)) {
         $script:chosen = if ($script:targets.Count -gt 0) { $script:targets[0] } else { [IntPtr]::Zero }
     }
-    $payload = @{ present = $false; active = $false; minimized = $false; menuOpen = $false }
+    $payload = @{ present = $false; active = $false; minimized = $false }
     if ($script:chosen -ne [IntPtr]::Zero) {
         $rect = [UsageWindows+Rect]::new()
         $valid = [UsageWindows]::DwmGetWindowAttribute($script:chosen, 9, [ref]$rect, 16) -eq 0
@@ -72,8 +55,7 @@ while ($true) {
             [uint32]$chosenOwner = 0
             [void][UsageWindows]::GetWindowThreadProcessId($script:chosen, [ref]$chosenOwner)
             $active = $foreground -eq $script:chosen -or $foregroundOwner -eq $chosenOwner -or ($foregroundOwner -eq $usageOverlayOwnerId -and $script:lastActive)
-            $menuOpen = $active -and ((Test-VisibleMenu $script:chosen) -or ($foregroundOwner -eq $chosenOwner -and $foreground -ne $script:chosen))
-            $payload = @{ present = $true; active = $active; menuOpen = $menuOpen;
+            $payload = @{ present = $true; active = $active;
                 minimized = [UsageWindows]::IsIconic($script:chosen);
                 x = $rect.Left; y = $rect.Top; width = $rect.Right - $rect.Left; height = $rect.Bottom - $rect.Top }
         }

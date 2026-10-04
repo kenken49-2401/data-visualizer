@@ -22,7 +22,7 @@ jobs:
       - run: npm ci
       - run: npm run install:electron
       - run: npm test
-      - name: Validate Windows tracker and accessibility declarations
+      - name: Validate Windows foreground tracker
         shell: powershell
         run: |
           $tokens = $null
@@ -32,8 +32,6 @@ jobs:
           $source = Get-Content -Raw 'src/windows-tracker.ps1'
           $native = [regex]::Match($source, "(?s)Add-Type @'\r?\n(.*?)\r?\n'@").Groups[1].Value
           Add-Type -TypeDefinition $native
-          Add-Type -AssemblyName UIAutomationClient
-          Add-Type -AssemblyName UIAutomationTypes
       - name: Run the real Windows visibility helper
         shell: pwsh
         run: ./scripts/test-tracker.ps1

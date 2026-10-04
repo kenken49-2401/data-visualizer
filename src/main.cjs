@@ -53,15 +53,23 @@ function updateSettings(patch) {
   window?.setAlwaysOnTop(settings.alwaysOnTop, 'floating');
   place(); buildMenu(); notify();
 }
+function setAutomaticVisibility(visible) {
+  // Keep the running taskbar button while the panel is suppressed.
+  // An invisible panel must never intercept clicks on ChatGPT or other apps.
+  window.setOpacity(visible ? 1 : 0);
+  window.setIgnoreMouseEvents(!visible);
+  if (!smoke && !userHidden && !userMinimized) window.showInactive();
+}
 function place(force = false) {
   if (!window || window.isDestroyed()) return;
-  if (!demo && process.platform === 'win32' && !visibleForChatGPT(settings, tracked, trackerFailed)) { window.hide(); notify(); return; }
+  if (!demo && process.platform === 'win32' && !visibleForChatGPT(settings, tracked, trackerFailed)) { setAutomaticVisibility(false); notify(); return; }
+  setAutomaticVisibility(true);
   const size = SIZES[settings.size];
   let bounds;
   if (settings.mode === 'manual' && settings.x !== null && settings.y !== null) {
     bounds = { ...size, x: settings.x, y: settings.y };
   } else if (settings.mode === 'follow' && tracked?.present && !trackerFailed) {
-    if (!settings.chatgptOnly && !force && (!tracked.active || tracked.minimized)) { window.hide(); notify(); return; }
+    if (!settings.chatgptOnly && !force && (!tracked.active || tracked.minimized)) { setAutomaticVisibility(false); notify(); return; }
     const physical = { x: tracked.x, y: tracked.y, width: tracked.width, height: tracked.height };
     bounds = bottomLeft(screen.screenToDipRect(null, physical), size);
     bounds.x += settings.offsetX; bounds.y += settings.offsetY;
@@ -79,7 +87,7 @@ function minimize() { userMinimized = true; window.setFocusable(true); window.se
 function restore() {
   userHidden = false; userMinimized = false;
   if (window.isMinimized()) window.restore();
-  window.setFocusable(false); window.setSkipTaskbar(true); place(true); buildMenu();
+  window.setFocusable(true); window.setSkipTaskbar(false); place(true); buildMenu();
 }
 function nudge(dx, dy) {
   if (settings.mode === 'manual') {
@@ -159,12 +167,14 @@ async function cancelLogin() {
 function startTracker() {
   if (process.platform !== 'win32' || smoke || demo) return;
   const binary = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  tracker = spawn(binary, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const source = `$usageOverlayOwnerId = ${process.pid}\n` + readFileSync(path.join(__dirname, 'windows-tracker.ps1'), 'utf8');
+  const encoded = Buffer.from(source, 'utf16le').toString('base64');
+  tracker = spawn(binary, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const failed = () => { trackerFailed = true; place(); };
   let receivedAt = Date.now();
   const watchdog = setInterval(() => { if (Date.now() - receivedAt > 5000) failed(); }, 1000);
   tracker.once('exit', () => clearInterval(watchdog));
-  tracker.on('error', failed); tracker.on('exit', failed); tracker.stdin.on('error', failed); tracker.stderr.on('data', () => {});
+  tracker.on('error', failed); tracker.on('exit', failed); tracker.stderr.on('data', () => {});
   createInterface({ input: tracker.stdout }).on('line', line => {
     try {
       const value = JSON.parse(line);
@@ -173,7 +183,6 @@ function startTracker() {
       receivedAt = Date.now(); trackerFailed = false; tracked = value; place();
     } catch {}
   });
-  tracker.stdin.end(`$usageOverlayOwnerId = ${process.pid}\n` + readFileSync(path.join(__dirname, 'windows-tracker.ps1'), 'utf8') + '\n');
 }
 function guard(event) {
   const frame = event.senderFrame;
@@ -216,6 +225,12 @@ async function smokeCheck() {
   if (!userHidden) throw new Error('Hide action failed');
   place(); if (window.isVisible()) throw new Error('Background refresh restored a hidden panel');
   restore();
+  if (process.platform === 'win32') {
+    window.showInactive(); setAutomaticVisibility(false); await wait();
+    if (!window.isVisible() || window.getOpacity() !== 0 || !window.isFocusable()) throw new Error('Suppressed panel lost its taskbar window');
+    setAutomaticVisibility(true); await wait();
+    if (window.getOpacity() !== 1) throw new Error('Panel failed to reappear');
+  }
   writeFileSync(path.join(app.getPath('userData'), 'smoke-result.json'), JSON.stringify({ version, passed: true }));
   console.log(`Renderer smoke: passed v${version} (three sizes, values, isolation, rounded layout, auth error, stale snapshot, hide/restore)`); app.quit();
 }
@@ -227,8 +242,8 @@ else {
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
     window = new BrowserWindow({ ...SIZES[settings.size], frame: false, transparent: true, roundedCorners: true,
-      resizable: false, maximizable: false, minimizable: true, skipTaskbar: true,
-      alwaysOnTop: settings.alwaysOnTop, focusable: false, show: false, backgroundColor: '#00000000',
+      resizable: false, maximizable: false, minimizable: true, skipTaskbar: false,
+      alwaysOnTop: settings.alwaysOnTop, focusable: true, show: false, backgroundColor: '#00000000',
       webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false } });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
@@ -241,7 +256,7 @@ else {
       }, 250);
     });
     window.on('minimize', () => { userMinimized = true; });
-    window.on('restore', () => { userMinimized = false; userHidden = false; window.setFocusable(false); window.setSkipTaskbar(true); });
+    window.on('restore', () => { userMinimized = false; userHidden = false; window.setFocusable(true); window.setSkipTaskbar(false); });
     const handler = (name, fn) => ipcMain.handle(name, (event, ...args) => { guard(event); return fn(...args); });
     handler('usage:get', model);
     handler('usage:refresh', () => { if (!demo) return service?.refresh(); });
