@@ -167,9 +167,9 @@ async function cancelLogin() {
 function startTracker() {
   if (process.platform !== 'win32' || smoke || demo) return;
   const binary = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const source = `$usageOverlayOwnerId = ${process.pid}\n` + readFileSync(path.join(__dirname, 'windows-tracker.ps1'), 'utf8');
+  const source = `$ProgressPreference = 'SilentlyContinue'\n$usageOverlayOwnerId = ${process.pid}\n` + readFileSync(path.join(__dirname, 'windows-tracker.ps1'), 'utf8');
   const encoded = Buffer.from(source, 'utf16le').toString('base64');
-  tracker = spawn(binary, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  tracker = spawn(binary, ['-NoLogo', '-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-EncodedCommand', encoded], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const failed = () => { trackerFailed = true; place(); };
   let receivedAt = Date.now();
   const watchdog = setInterval(() => { if (Date.now() - receivedAt > 5000) failed(); }, 1000);

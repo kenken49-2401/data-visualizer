@@ -1,9 +1,9 @@
 $ErrorActionPreference = 'Stop'
-$source = '$usageOverlayOwnerId = 0' + "`n" + (Get-Content src/windows-tracker.ps1 -Raw)
+$source = "`$ProgressPreference = 'SilentlyContinue'`n`$usageOverlayOwnerId = 0" + "`n" + (Get-Content src/windows-tracker.ps1 -Raw)
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($source))
 $process = [Diagnostics.Process]::new()
 $process.StartInfo.FileName = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
-$process.StartInfo.Arguments = "-NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded"
+$process.StartInfo.Arguments = "-NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand $encoded"
 $process.StartInfo.UseShellExecute = $false
 $process.StartInfo.CreateNoWindow = $true
 $process.StartInfo.RedirectStandardOutput = $true
@@ -21,6 +21,6 @@ try {
   if (-not $process.HasExited) { $process.Kill() }
   $process.WaitForExit()
   $errors = $process.StandardError.ReadToEnd()
-  if ($errors) { throw $errors }
+  if ($errors) { Write-Output ('::error title=Tracker stderr::' + ($errors -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')); throw $errors }
   $process.Dispose()
 }

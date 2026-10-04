@@ -34,7 +34,9 @@ jobs:
           Add-Type -TypeDefinition $native
       - name: Run the real Windows visibility helper
         shell: pwsh
-        run: ./scripts/test-tracker.ps1
+        run: |
+          try { ./scripts/test-tracker.ps1 }
+          catch { Write-Output ("::error title=Tracker invocation::" + ($_.Exception.Message -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')); throw }
       - run: npm run smoke
       - run: npm run smoke -- --launcher
       - run: npm run smoke -- --staged-update
