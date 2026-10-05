@@ -16,3 +16,5 @@ svg { display: block; width: 100%; height: auto; overflow: visible; }
 .dot:hover { r: 5; stroke: white; } .empty { fill: #8095b4; font-size: 14px; text-anchor: middle; }
 #reading, footer { color: #8095b4; font-size: 11px; line-height: 1.6; } #reading { min-height: 18px; }
 @media(max-width: 560px) { body { padding: 14px; } #updated { display: none; } }
+
+#cloud-status{font-size:12px;color:#92bdff;margin:10px 24px}#cloud-setup{margin:0 24px 12px;background:#152c4c;color:#d9e9ff;border:1px solid #3d6aa6;border-radius:10px;padding:8px 12px;cursor:pointer}

@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"><title>スリープ中の記録</title><link rel="stylesheet" href="history.css"><link rel="stylesheet" href="cloud.css"></head>
+<body><main><header><h1>スリープ中も記録する</h1><p>無料の GitHub Actions が約10分おきに取得し、PCの復帰後に24時間グラフへ取り込みます。</p></header>
+<p class="hint">定期実行は遅れる・省略されることがあります。記録できなかった時間は空白として表示します。公開リポジトリの標準ランナーを使用します。</p>
+<section><h2>1. 記録用の鍵を作る</h2><p>この鍵をGitHubのシークレットに登録します。アプリには履歴を読む鍵だけをWindowsで保護して保存します。</p>
+<button id="generate">初回の鍵を作る</button><div id="key-panel" hidden><label for="master">GitHub に登録する鍵（この画面を閉じると消えます）</label><input id="master" readonly autocomplete="off" spellcheck="false"><p>鍵を選択してコピーし、安全な場所にも保管してください。チャットや公開ファイルには貼らないでください。</p></div>
+<details><summary>別のPC・再インストール時：既存の鍵で接続</summary><label for="existing">保存しておいた記録用の鍵</label><input id="existing" type="password" autocomplete="off" spellcheck="false"><button id="install">接続する</button></details></section>
+<section><h2>2. GitHub に登録する</h2><p>下のボタンから New repository secret を選び、Name を <code>USAGE_RECORDING_KEY</code>、Secret を上の鍵にして保存します。</p><button data-open="secrets">GitHub のシークレット設定を開く</button></section>
+<section><h2>3. クラウド側でログインする</h2><p>Actions画面で Run workflow を選び、mode を <code>login</code> にして実行します。準備ができると下にコードが表示されます。</p><button data-open="workflow">Actions を開く</button><button id="check">接続を確認</button>
+<div id="challenge" hidden><p>認証コード：<strong id="code"></strong></p><button data-open="auth">OpenAI の認証画面を開く</button><p>このPCと同じ ChatGPT Plus アカウントでログインし、クラウド側のCodexを認証してください。PCの認証ファイルを転送する必要はありません。</p></div></section>
+<section><h2>4. 自動記録を確認する</h2><p id="status" aria-live="polite"></p><p>以降はPCを閉じていても記録されます。認証が切れた場合は手順3を再実行してください。定期実行が無効化された場合も Actions で再開してください。</p><button id="disable">このPCの同期を解除</button><p class="hint">同期解除ではクラウドの記録は止まりません。完全に停止するには GitHub のシークレットを削除し、ワークフローを Disable workflow にしてください。OpenAIの認証も必要に応じて取り消してください。</p></section>
+<p id="error" role="alert"></p></main><script src="cloud-renderer.js"></script></body></html>

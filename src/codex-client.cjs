@@ -28,12 +28,13 @@ function codexExecutable() {
 }
 
 class CodexClient extends EventEmitter {
-  constructor({ spawnProcess = spawn, executable = codexExecutable, timeoutMs = 20000, env = process.env } = {}) {
+  constructor({ spawnProcess = spawn, executable = codexExecutable, timeoutMs = 20000, env = process.env, cliArgs = [] } = {}) {
     super();
     this.spawnProcess = spawnProcess;
     this.executable = executable;
     this.timeoutMs = timeoutMs;
     this.env = env;
+    this.cliArgs = cliArgs;
     this.process = null;
     this.pending = new Map();
     this.nextId = 1;
@@ -49,7 +50,7 @@ class CodexClient extends EventEmitter {
   }
 
   async connect() {
-    const child = this.spawnProcess(this.executable(), ['app-server', '--listen', 'stdio://'], {
+    const child = this.spawnProcess(this.executable(), [...this.cliArgs, 'app-server', '--listen', 'stdio://'], {
       stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: this.env,
     });
     this.process = child;

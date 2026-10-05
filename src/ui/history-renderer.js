@@ -38,6 +38,9 @@ function plot(svg, data, key) {
   if (!count) svg.append(node('text', { x: 350, y: 83, class: 'empty' }, 'まだ記録がありません。取得した残量から表示します。'));
 }
 function render(data) {
+  const cloud = data.cloud || {};
+  const statuses = { ready: 'クラウドの記録を同期しています。', delayed: 'クラウドの記録に遅延があります。', 'account-mismatch': 'クラウドとPCのアカウントが異なるため、同期していません。', unavailable: 'クラウドの履歴を取得できません。PC側の記録を続けています。', 'recording-error': 'クラウドで取得に失敗しました。設定を確認してください。' };
+  document.querySelector('#cloud-status').textContent = statuses[cloud.status] || '';
   const last = data.points.at(-1);
   document.querySelector('#updated').textContent = last ? `${time.format(new Date(last.at))} 取得` : '';
   document.querySelector('#notice').textContent = data.demo ? 'デモ表示 · 実際の使用量ではありません' : data.accountPending ? 'ログイン先を確認でき次第、履歴を記録します。' : data.sessionOnly ? 'アカウント識別情報がないため、この起動中の履歴のみです。' : data.saveError ? '履歴を保存できません。現在の起動中の記録を表示しています。' : '';
@@ -50,3 +53,5 @@ function render(data) {
 window.usageHistory.subscribe(render);
 window.usageHistory.get().then(render);
 setInterval(() => { void window.usageHistory.get().then(render); }, 60000);
+
+document.querySelector('#cloud-setup').onclick = () => void window.usageHistory.cloud();

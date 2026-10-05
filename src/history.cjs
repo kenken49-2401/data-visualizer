@@ -12,7 +12,7 @@ function percent(value) { return typeof value === 'number' && Number.isFinite(va
 function normalizePoint(raw) {
   if (!raw || !Number.isSafeInteger(raw.at) || raw.at <= 0) return null;
   const point = { at: raw.at, fiveHour: percent(raw.fiveHour), weekly: percent(raw.weekly),
-    gapMs: Number.isFinite(raw.gapMs) ? Math.min(610000, Math.max(130000, raw.gapMs)) : 130000 };
+    gapMs: Number.isFinite(raw.gapMs) ? Math.min(1810000, Math.max(130000, raw.gapMs)) : 130000 };
   return point.fiveHour === null && point.weekly === null ? null : point;
 }
 class HistoryStore {
@@ -54,6 +54,17 @@ class HistoryStore {
     if (last && point.at >= last.at && Math.floor(point.at / 30000) === Math.floor(last.at / 30000)) this.points[this.points.length - 1] = point;
     else if (!last || point.at > last.at) this.points.push(point);
     else return false;
+    this.prune(); this.save(); return true;
+  }
+  merge(raw) {
+    if (!this.key || !this.persistent || raw?.account !== this.key || !Array.isArray(raw.points) || raw.points.length > 3000) return false;
+    const now = this.clock(), buckets = new Map();
+    for (const point of [...raw.points.map(normalizePoint).filter(Boolean), ...this.points]) {
+      if (point.at < now - DAY || point.at > now) continue;
+      const bucket = Math.floor(point.at / 30000), previous = buckets.get(bucket);
+      if (!previous || previous.at <= point.at) buckets.set(bucket, point);
+    }
+    this.points = [...buckets.values()].sort((a, b) => a.at - b.at);
     this.prune(); this.save(); return true;
   }
   save() {

@@ -1,0 +1,47 @@
+name: Record sleeping-PC usage
+on:
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Choose login for initial setup or renewed authentication'
+        type: choice
+        options: [record, login]
+        default: record
+permissions:
+  contents: write
+concurrency:
+  group: encrypted-usage-recording
+  cancel-in-progress: false
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      USAGE_RECORDING_KEY: ${{ secrets.USAGE_RECORDING_KEY }}
+    steps:
+      - name: Check configuration
+        id: configured
+        shell: bash
+        run: |
+          if [ -n "$USAGE_RECORDING_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Cloud recording is not configured."
+          fi
+      - if: steps.configured.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+      - if: steps.configured.outputs.enabled == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - if: steps.configured.outputs.enabled == 'true'
+        run: npm ci --omit=dev
+      - name: Record quotas or authorize cloud session
+        if: steps.configured.outputs.enabled == 'true'
+        run: node scripts/cloud-record.cjs
+        env:
+          USAGE_RECORDING_KEY: ${{ secrets.USAGE_RECORDING_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RECORDING_MODE: ${{ inputs.mode || 'record' }}

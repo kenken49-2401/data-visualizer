@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, shell, session, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, shell, session, powerMonitor, safeStorage } = require('electron');
 const { spawn } = require('node:child_process');
 const { readFileSync, mkdirSync, writeFileSync } = require('node:fs');
 const { createInterface } = require('node:readline');
@@ -10,6 +10,7 @@ const { UsageService } = require('./usage-service.cjs');
 const { demoUsage, publicError } = require('./usage.cjs');
 const { bottomLeft, keepOnScreen } = require('./position.cjs');
 const { HistoryStore, accountKey } = require('./history.cjs');
+const { CloudConfig, CloudSync, validAuthUrl } = require('./cloud-sync.cjs');
 const { SettingsStore, SIZES } = require('./settings.cjs');
 const { UpdateManager } = require('./updater.cjs');
 const { visibleForChatGPT } = require('./visibility.cjs');
@@ -30,6 +31,8 @@ if (process.env.CODEX_USAGE_RUNTIME_DIR) {
 if (smoke) app.commandLine.appendSwitch('disable-gpu');
 const pageFile = path.join(__dirname, 'ui', 'index.html');
 let historyWindow, history, historyCheck, historyGeneration = 0;
+let cloudWindow, cloudConfig, cloudSync;
+const cloudFile = path.join(__dirname, 'ui', 'cloud.html');
 const historyFile = path.join(__dirname, 'ui', 'history.html');
 let window, tray, tracker, service, client, store, updater, savePositionTimer, loginTimer;
 let settings, tracked = null, trackerFailed = false;
@@ -37,11 +40,11 @@ let loginPending = false, loginId = null, userHidden = false, userMinimized = fa
 let state = demo ? { status: 'demo', usage: demoUsage(), updatedAt: Date.now(), error: null }
   : { status: 'loading', usage: null, updatedAt: null, error: null };
 
-function historyModel() { return { ...history.snapshot(), demo }; }
+function historyModel() { return { ...history.snapshot(), demo, cloud: cloudSync?.state ?? { status: 'disabled' } }; }
 function notifyHistory() {
   if (historyWindow && !historyWindow.isDestroyed() && !historyWindow.webContents.isLoading()) historyWindow.webContents.send('history:state', historyModel());
 }
-function suspendHistory() { historyGeneration++; history.suspend(); historyCheck = null; notifyHistory(); }
+function suspendHistory() { historyGeneration++; history.suspend(); historyCheck = null; cloudSync?.reset(); notifyHistory(); }
 async function recordHistory(next) {
   if (next.status !== 'ready') {
     if (!next.usage) suspendHistory();
@@ -56,6 +59,7 @@ async function recordHistory(next) {
       if (generation !== historyGeneration || result?.account?.type !== 'chatgpt') return;
       const key = accountKey(result.account);
       history.selectAccount(key ?? randomBytes(32).toString('hex'), key !== null);
+      cloudSync?.reset(); void cloudSync?.check();
     } catch { return; }
     finally { if (historyCheck === check) historyCheck = null; }
   }
@@ -75,6 +79,26 @@ async function showHistory() {
   created.on('closed', () => { if (historyWindow === created) historyWindow = null; });
   await created.loadFile(historyFile);
   if (historyWindow === created && !created.isDestroyed()) created.show();
+}
+
+function cloudModel() {
+  return { ...cloudSync.state, configured: !!cloudConfig.key, available: !demo && cloudConfig.available() };
+}
+function notifyCloud() {
+  notifyHistory();
+  if (cloudWindow && !cloudWindow.isDestroyed() && !cloudWindow.webContents.isLoading()) cloudWindow.webContents.send('cloud:state', cloudModel());
+}
+async function showCloud() {
+  if (cloudWindow && !cloudWindow.isDestroyed()) { if (cloudWindow.isMinimized()) cloudWindow.restore(); cloudWindow.show(); cloudWindow.focus(); return; }
+  const created = new BrowserWindow({ width: 800, height: 800, minWidth: 500, minHeight: 500, title: 'スリープ中の記録 · 初回設定', backgroundColor: '#090d14', autoHideMenuBar: true, show: false,
+    webPreferences: { preload: path.join(__dirname, 'cloud-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false } });
+  cloudWindow = created;
+  created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  created.webContents.on('will-navigate', e => e.preventDefault());
+  created.webContents.on('did-finish-load', notifyCloud);
+  created.on('close', () => { if (cloudWindow === created) cloudWindow = null; });
+  created.on('closed', () => { if (cloudWindow === created) cloudWindow = null; });
+  await created.loadFile(cloudFile); if (cloudWindow === created && !created.isDestroyed()) created.show();
 }
 
 function model() {
@@ -165,6 +189,7 @@ function contextMenu() {
     { type: 'separator' },
     { label: '使用量の更新間隔', submenu: [60, 120, 180, 300].map(seconds => ({ label: `${seconds / 60}分`, type: 'radio', checked: settings.intervalSeconds === seconds, click: () => updateSettings({ intervalSeconds: seconds }) })) },
     { label: '24時間の残量グラフ', click: () => void showHistory() },
+    { label: 'スリープ中の記録を設定', click: () => void showCloud() },
     { label: '今すぐ使用量を更新', enabled: !demo, click: () => void service?.refresh() },
     { label: 'ChatGPT アカウントでログイン', enabled: !demo, click: () => void login() },
     { type: 'separator' },
@@ -291,6 +316,11 @@ async function smokeCheck() {
   history.suspend(); notifyHistory(); await wait();
   if (!await historyWindow.webContents.executeJavaScript(`document.querySelectorAll('.dot').length === 0 && document.querySelector('.empty').textContent.includes('まだ記録')`)) throw new Error('History pending-account view leaked samples');
   historyWindow.close();
+  await showCloud(); await wait();
+  if (!await cloudWindow.webContents.executeJavaScript(`document.querySelector('#generate').disabled && document.querySelector('#master').value === '' && typeof require === 'undefined' && typeof process === 'undefined'`)) throw new Error('Cloud setup isolation failed');
+  const firstCloud = cloudWindow; await showCloud(); if (cloudWindow !== firstCloud) throw new Error('Duplicate cloud setup window');
+  writeFileSync(path.join(app.getPath('userData'), 'cloud.png'), (await cloudWindow.webContents.capturePage()).toPNG());
+  cloudWindow.close();
   writeFileSync(path.join(app.getPath('userData'), 'smoke-result.json'), JSON.stringify({ version, passed: true }));
   console.log(`Renderer smoke: passed v${version} (three sizes, values, isolation, rounded layout, auth error, stale snapshot, hide/restore)`); app.quit();
 }
@@ -309,6 +339,8 @@ else {
         history.capture({ status: 'ready', usage, updatedAt: at }, 300);
       }
     }
+    cloudConfig = new CloudConfig(app.getPath('userData'), safeStorage);
+    cloudSync = new CloudSync(cloudConfig, history); cloudSync.on('state', notifyCloud);
     store = new SettingsStore(app.getPath('userData')); settings = store.value;
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
@@ -337,6 +369,18 @@ else {
     handler('usage:restart', restart);
     handler('usage:history', showHistory);
     ipcMain.handle('history:get', event => { guard(event, historyWindow, historyFile); return historyModel(); });
+    ipcMain.handle('history:cloud', event => { guard(event, historyWindow, historyFile); return showCloud(); });
+    const cloudHandler = (name, fn) => ipcMain.handle(name, (event, ...args) => { guard(event, cloudWindow, cloudFile); return fn(...args); });
+    cloudHandler('cloud:get', cloudModel);
+    cloudHandler('cloud:generate', () => { if (demo || cloudConfig.key) throw new Error('Already configured'); const key = cloudConfig.generate(); cloudSync.reset(); void cloudSync.check(); return key; });
+    cloudHandler('cloud:install', key => { if (demo || typeof key !== 'string' || key.length !== 64) throw new Error('Invalid key'); cloudConfig.install(key); cloudSync.reset(); void cloudSync.check(); });
+    cloudHandler('cloud:disable', () => { if (demo) return; cloudConfig.disable(); cloudSync.reset(); });
+    cloudHandler('cloud:check', () => demo ? undefined : cloudSync.check());
+    cloudHandler('cloud:open', target => {
+      const urls = { secrets: 'https://github.com/kenken49-2401/data-visualizer/settings/secrets/actions', workflow: 'https://github.com/kenken49-2401/data-visualizer/actions/workflows/record-usage.yml', auth: cloudSync.state.challenge?.verificationUrl };
+      if (!Object.hasOwn(urls, target) || !urls[target] || target === 'auth' && (!validAuthUrl(urls.auth) || cloudSync.state.challenge.until <= Date.now())) throw new Error('Unexpected destination');
+      return shell.openExternal(urls[target]);
+    });
     if (!smoke) {
       tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'ui', 'tray.png'))); buildMenu(); notify();
       tray.on('click', restore);
@@ -358,10 +402,10 @@ else {
       : new UpdateManager({ currentRoot: path.join(__dirname, '..'), directory: path.join(app.getPath('userData'), 'updates') });
     updater.on('state', () => { buildMenu(); notify(); });
     if (settings.autoUpdates) updater.start();
-    service.start(); startTracker();
+    service.start(); startTracker(); cloudSync.start();
     for (const event of ['display-metrics-changed', 'display-added', 'display-removed']) screen.on(event, () => place());
-    powerMonitor.on('resume', () => { void service.refresh(); if (settings.autoUpdates) void updater.check(); place(); });
+    powerMonitor.on('resume', () => { void service.refresh(); void cloudSync.check(); if (settings.autoUpdates) void updater.check(); place(); });
   }).catch(error => { console.error(smoke ? error.stack : 'Overlay startup failed'); app.exit(1); });
 }
-app.on('before-quit', () => { clearTimeout(loginTimer); clearTimeout(savePositionTimer); service?.stop(); updater?.stop(); tracker?.kill(); tray?.destroy(); });
+app.on('before-quit', () => { clearTimeout(loginTimer); clearTimeout(savePositionTimer); service?.stop(); cloudSync?.stop(); updater?.stop(); tracker?.kill(); tray?.destroy(); });
 app.on('window-all-closed', () => app.quit());
