@@ -50,3 +50,10 @@ document.querySelector('#refresh').addEventListener('click', async () => {
   try { await window.usageOverlay.refresh(); } finally { button.disabled = false; }
 });
 setInterval(() => { if (currentState) render(currentState); }, 15000);
+
+for (const section of document.querySelectorAll('.quota')) {
+  section.addEventListener('click', () => void window.usageOverlay.history());
+  section.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void window.usageOverlay.history(); }
+  });
+}

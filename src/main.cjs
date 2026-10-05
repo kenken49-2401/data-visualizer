@@ -4,10 +4,12 @@ const { spawn } = require('node:child_process');
 const { readFileSync, mkdirSync, writeFileSync } = require('node:fs');
 const { createInterface } = require('node:readline');
 const path = require('node:path');
+const { randomBytes } = require('node:crypto');
 const { CodexClient } = require('./codex-client.cjs');
 const { UsageService } = require('./usage-service.cjs');
 const { demoUsage, publicError } = require('./usage.cjs');
 const { bottomLeft, keepOnScreen } = require('./position.cjs');
+const { HistoryStore, accountKey } = require('./history.cjs');
 const { SettingsStore, SIZES } = require('./settings.cjs');
 const { UpdateManager } = require('./updater.cjs');
 const { visibleForChatGPT } = require('./visibility.cjs');
@@ -27,11 +29,53 @@ if (process.env.CODEX_USAGE_RUNTIME_DIR) {
 }
 if (smoke) app.commandLine.appendSwitch('disable-gpu');
 const pageFile = path.join(__dirname, 'ui', 'index.html');
+let historyWindow, history, historyCheck, historyGeneration = 0;
+const historyFile = path.join(__dirname, 'ui', 'history.html');
 let window, tray, tracker, service, client, store, updater, savePositionTimer, loginTimer;
 let settings, tracked = null, trackerFailed = false;
 let loginPending = false, loginId = null, userHidden = false, userMinimized = false;
 let state = demo ? { status: 'demo', usage: demoUsage(), updatedAt: Date.now(), error: null }
   : { status: 'loading', usage: null, updatedAt: null, error: null };
+
+function historyModel() { return { ...history.snapshot(), demo }; }
+function notifyHistory() {
+  if (historyWindow && !historyWindow.isDestroyed() && !historyWindow.webContents.isLoading()) historyWindow.webContents.send('history:state', historyModel());
+}
+function suspendHistory() { historyGeneration++; history.suspend(); historyCheck = null; notifyHistory(); }
+async function recordHistory(next) {
+  if (next.status !== 'ready') {
+    if (!next.usage) suspendHistory();
+    return;
+  }
+  const generation = historyGeneration;
+  if (!history.key) {
+    if (!historyCheck) historyCheck = client.request('account/read', { refreshToken: false });
+    const check = historyCheck;
+    try {
+      const result = await check;
+      if (generation !== historyGeneration || result?.account?.type !== 'chatgpt') return;
+      const key = accountKey(result.account);
+      history.selectAccount(key ?? randomBytes(32).toString('hex'), key !== null);
+    } catch { return; }
+    finally { if (historyCheck === check) historyCheck = null; }
+  }
+  if (generation === historyGeneration) { history.capture(next, settings.intervalSeconds); notifyHistory(); }
+}
+async function showHistory() {
+  if (historyWindow && !historyWindow.isDestroyed()) { if (historyWindow.isMinimized()) historyWindow.restore(); historyWindow.show(); historyWindow.focus(); return; }
+  const created = new BrowserWindow({ width: 760, height: 720, minWidth: 480, minHeight: 540, title: 'Codex 残量の推移 · 24時間',
+    backgroundColor: '#090d14', autoHideMenuBar: true, show: false,
+    icon: path.join(__dirname, 'ui', 'tray.png'),
+    webPreferences: { preload: path.join(__dirname, 'history-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false } });
+  created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  created.webContents.on('will-navigate', event => event.preventDefault());
+  created.webContents.on('did-finish-load', notifyHistory);
+  historyWindow = created;
+  created.on('close', () => { if (historyWindow === created) historyWindow = null; });
+  created.on('closed', () => { if (historyWindow === created) historyWindow = null; });
+  await created.loadFile(historyFile);
+  if (historyWindow === created && !created.isDestroyed()) created.show();
+}
 
 function model() {
   return { ...state, settings, version, loginPending, trackerFailed, settingsError: store?.error,
@@ -120,6 +164,7 @@ function contextMenu() {
     { label: '最前面に表示', type: 'checkbox', checked: settings.alwaysOnTop, click: item => updateSettings({ alwaysOnTop: item.checked }) },
     { type: 'separator' },
     { label: '使用量の更新間隔', submenu: [60, 120, 180, 300].map(seconds => ({ label: `${seconds / 60}分`, type: 'radio', checked: settings.intervalSeconds === seconds, click: () => updateSettings({ intervalSeconds: seconds }) })) },
+    { label: '24時間の残量グラフ', click: () => void showHistory() },
     { label: '今すぐ使用量を更新', enabled: !demo, click: () => void service?.refresh() },
     { label: 'ChatGPT アカウントでログイン', enabled: !demo, click: () => void login() },
     { type: 'separator' },
@@ -184,11 +229,11 @@ function startTracker() {
     } catch {}
   });
 }
-function guard(event) {
+function guard(event, target = window, documentFile = pageFile) {
   const frame = event.senderFrame;
-  const mainFrame = window?.webContents.mainFrame;
-  if (event.sender !== window?.webContents || !frame || !mainFrame || frame.processId !== mainFrame.processId ||
-      frame.routingId !== mainFrame.routingId || !matchesDocument(frame.url, pageFile)) throw new Error('Unexpected sender');
+  const mainFrame = target?.webContents.mainFrame;
+  if (event.sender !== target?.webContents || !frame || !mainFrame || frame.processId !== mainFrame.processId ||
+      frame.routingId !== mainFrame.routingId || !matchesDocument(frame.url, documentFile)) throw new Error('Unexpected sender');
 }
 async function smokeCheck() {
   const wait = () => new Promise(resolve => setTimeout(resolve, 120));
@@ -231,6 +276,21 @@ async function smokeCheck() {
     setAutomaticVisibility(true); await wait();
     if (window.getOpacity() !== 1) throw new Error('Panel failed to reappear');
   }
+  await window.webContents.executeJavaScript(`document.querySelector('[data-window="fiveHour"]').click()`);
+  for (let attempt = 0; attempt < 30 && (!historyWindow || historyWindow.webContents.isLoading()); attempt++) await wait();
+  if (!historyWindow) throw new Error('History click failed to open window');
+  await wait();
+  if (!await historyWindow.webContents.executeJavaScript(`document.querySelectorAll('.dot').length > 200 && document.querySelectorAll('.trace').length >= 4 && document.querySelector('#notice').textContent.includes('デモ') && typeof require === 'undefined' && typeof process === 'undefined'`)) throw new Error('History chart rendering failed');
+  const firstWindow = historyWindow;
+  await showHistory(); if (historyWindow !== firstWindow) throw new Error('History opened duplicate windows');
+  await historyWindow.webContents.executeJavaScript(`document.querySelector('.dot').dispatchEvent(new PointerEvent('pointerenter'))`);
+  if (!await historyWindow.webContents.executeJavaScript(`document.querySelector('#reading').textContent.includes('残り')`)) throw new Error('History point tooltip failed');
+  writeFileSync(path.join(app.getPath('userData'), 'history.png'), (await historyWindow.webContents.capturePage()).toPNG());
+  historyWindow.close();
+  await showHistory(); await wait();
+  history.suspend(); notifyHistory(); await wait();
+  if (!await historyWindow.webContents.executeJavaScript(`document.querySelectorAll('.dot').length === 0 && document.querySelector('.empty').textContent.includes('まだ記録')`)) throw new Error('History pending-account view leaked samples');
+  historyWindow.close();
   writeFileSync(path.join(app.getPath('userData'), 'smoke-result.json'), JSON.stringify({ version, passed: true }));
   console.log(`Renderer smoke: passed v${version} (three sizes, values, isolation, rounded layout, auth error, stale snapshot, hide/restore)`); app.quit();
 }
@@ -238,6 +298,17 @@ if (!app.requestSingleInstanceLock() && !smoke) app.quit();
 else {
   app.on('second-instance', () => { if (window && !window.isDestroyed()) restore(); });
   app.whenReady().then(async () => {
+    history = new HistoryStore(demo ? null : app.getPath('userData'));
+    if (demo) {
+      history.selectAccount(accountKey({ type: 'chatgpt', email: 'demo@example.invalid' }));
+      const now = Date.now();
+      for (let i = 0; i < 145; i++) {
+        if (i > 50 && i < 65) continue;
+        const at = now - (144 - i) * 600000;
+        const usage = demoUsage(at); usage.fiveHour.remainingPercent = 100 - (i % 30) * 3; usage.weekly.remainingPercent = 90 - i / 3;
+        history.capture({ status: 'ready', usage, updatedAt: at }, 300);
+      }
+    }
     store = new SettingsStore(app.getPath('userData')); settings = store.value;
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
@@ -264,6 +335,8 @@ else {
     handler('usage:hide', hide); handler('usage:minimize', minimize); handler('usage:quit', () => app.quit());
     handler('usage:menu', () => contextMenu().popup({ window }));
     handler('usage:restart', restart);
+    handler('usage:history', showHistory);
+    ipcMain.handle('history:get', event => { guard(event, historyWindow, historyFile); return historyModel(); });
     if (!smoke) {
       tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'ui', 'tray.png'))); buildMenu(); notify();
       tray.on('click', restore);
@@ -271,15 +344,16 @@ else {
     await window.loadFile(path.join(__dirname, 'ui', 'index.html')); place();
     if (demo) { if (smoke) { await new Promise(resolve => setTimeout(resolve, 200)); await smokeCheck(); } return; }
     client = new CodexClient(); service = new UsageService(client, { intervalMs: settings.intervalSeconds * 1000 });
-    service.on('state', next => { state = next; notify(); });
+    service.on('state', next => { state = next; notify(); void recordHistory(next); });
     client.on('notification', (method, params) => {
+      if (method === 'account/updated' || method === 'account/login/completed') suspendHistory();
       if (method === 'account/login/completed') {
         loginPending = false; loginId = null; clearTimeout(loginTimer);
         if (params?.success === false) state = { status: 'error', usage: null, updatedAt: null, error: { kind: 'auth', text: 'ログインが完了しませんでした。もう一度お試しください' } };
         notify();
       }
     });
-    client.on('disconnected', () => { loginPending = false; loginId = null; clearTimeout(loginTimer); notify(); });
+    client.on('disconnected', () => { suspendHistory(); loginPending = false; loginId = null; clearTimeout(loginTimer); notify(); });
     updater = app.isPackaged ? new InstallerUpdater(require('electron-updater').autoUpdater, version)
       : new UpdateManager({ currentRoot: path.join(__dirname, '..'), directory: path.join(app.getPath('userData'), 'updates') });
     updater.on('state', () => { buildMenu(); notify(); });
@@ -287,7 +361,7 @@ else {
     service.start(); startTracker();
     for (const event of ['display-metrics-changed', 'display-added', 'display-removed']) screen.on(event, () => place());
     powerMonitor.on('resume', () => { void service.refresh(); if (settings.autoUpdates) void updater.check(); place(); });
-  }).catch(error => { console.error(smoke ? error.message : 'Overlay startup failed'); app.exit(1); });
+  }).catch(error => { console.error(smoke ? error.stack : 'Overlay startup failed'); app.exit(1); });
 }
 app.on('before-quit', () => { clearTimeout(loginTimer); clearTimeout(savePositionTimer); service?.stop(); updater?.stop(); tracker?.kill(); tray?.destroy(); });
 app.on('window-all-closed', () => app.quit());

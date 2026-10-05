@@ -1,6 +1,7 @@
 'use strict';
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('usageOverlay', {
+  history: () => ipcRenderer.invoke('usage:history'),
   getState: () => ipcRenderer.invoke('usage:get'),
   refresh: () => ipcRenderer.invoke('usage:refresh'),
   login: () => ipcRenderer.invoke('usage:login'),

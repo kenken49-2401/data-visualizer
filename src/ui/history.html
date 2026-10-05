@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Codex 残量の推移 · 24時間</title>
+<link rel="stylesheet" href="history.css">
+<script src="history-chart.js" defer></script><script src="history-renderer.js" defer></script>
+</head>
+<body>
+<header><span class="badge">C</span><div><h1>残量の推移</h1><p>直近24時間 · 取得できた残り割合</p></div><span id="updated"></span></header>
+<p id="notice" role="status"></p>
+<main>
+<section aria-labelledby="five-title"><h2 id="five-title">5時間枠 <span id="five-value">—</span></h2><svg id="five-chart" viewBox="0 0 680 180" role="img" aria-label="5時間枠の直近24時間の残り割合"></svg></section>
+<section aria-labelledby="week-title"><h2 id="week-title">7日間枠 <span id="week-value">—</span></h2><svg id="week-chart" viewBox="0 0 680 180" role="img" aria-label="7日間枠の直近24時間の残り割合"></svg></section>
+</main>
+<p id="reading" aria-live="polite">点にカーソルを合わせると、時刻と残り割合を確認できます。</p>
+<footer>記録はこの機能の導入後から。停止中・スリープ中・取得失敗中は空白です。リセットによる残量の回復も表示します。</footer>
+</body></html>

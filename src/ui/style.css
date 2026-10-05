@@ -40,3 +40,7 @@ body[data-size="tiny"] footer { margin-top: 5px; padding-top: 4px; }
 body[data-size="comfortable"] main { padding: 12px 14px; }
 body[data-size="comfortable"] .quota + .quota { margin-top: 10px; }
 body[data-size="comfortable"] footer { margin-top: 10px; }
+
+.quota { cursor: pointer; border-radius: 5px; }
+.quota:hover { background: #111d30; }
+.quota:focus-visible { outline: 2px solid #69a4ff; outline-offset: 3px; }
