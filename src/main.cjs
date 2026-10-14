@@ -195,6 +195,7 @@ function contextMenu() {
     { type: 'separator' },
     { label: 'アプリを自動更新', type: 'checkbox', checked: settings.autoUpdates, enabled: !demo, click: item => updateSettings({ autoUpdates: item.checked }) },
     { label: 'アプリの更新を確認', enabled: !demo, click: () => void updater?.check() },
+    { label: ({ idle: '更新状況：未確認', checking: '更新状況：確認中…', downloading: '更新状況：ダウンロード中…', preparing: '更新状況：準備中…', ready: `更新状況：v${updater?.state.available} を適用できます`, current: '更新状況：最新の公開版です', error: '更新状況：確認に失敗しました。再試行できます' })[updater?.state.status ?? 'idle'], enabled: false },
     { label: '更新を適用して再起動', enabled: updater?.state.status === 'ready', click: restart },
     { label: `バージョン ${version}`, enabled: false },
     { label: 'GitHub を開く', click: () => void shell.openExternal('https://github.com/kenken49-2401/data-visualizer') },

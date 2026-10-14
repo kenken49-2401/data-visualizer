@@ -37,7 +37,7 @@ function render(state) {
   document.querySelector('#restart').hidden = state.update?.status !== 'ready';
   const placement = document.querySelector('#placement');
   placement.textContent = state.update?.status === 'ready' ? '改善版を受信済み' : state.placement === 'manual' ? '自由位置' : state.placement === 'app' ? 'アプリに追従' : '画面左下';
-  const updates = { checking: 'アプリの更新を確認中', downloading: '改善版をダウンロード中', preparing: '改善版の起動を確認中', ready: `改善版 ${state.update?.available} を次回起動時に適用`, error: 'アプリの更新確認に失敗。現在の版を引き続き使用します' };
+  const updates = { current: '最新の公開版を使用しています', checking: 'アプリの更新を確認中', downloading: '改善版をダウンロード中', preparing: '改善版の起動を確認中', ready: `改善版 ${state.update?.available} を次回起動時に適用`, error: 'アプリの更新確認に失敗。現在の版を引き続き使用します' };
   placement.title = [`バージョン ${state.version ?? ''}`, updates[state.update?.status] ?? '', state.settingsError ? '設定を保存できませんでした' : '', state.trackerFailed ? 'ChatGPTの表示状態を確認できません。トレイから設定を変更できます' : ''].filter(Boolean).join('\n');
 }
 window.usageOverlay.subscribe(render);
