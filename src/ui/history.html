@@ -3,18 +3,21 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
-<title>Codex 残量の推移 · 24時間</title>
+<title>Codex 残量の履歴</title>
 <link rel="stylesheet" href="history.css">
 <script src="history-chart.js" defer></script><script src="history-renderer.js" defer></script>
 </head>
 <body>
-<header><span class="badge">C</span><div><h1>残量の推移</h1><p>直近24時間 · 取得できた残り割合</p></div><span id="updated"></span></header>
-<p id="notice" role="status"></p>
+<header><span class="badge">C</span><div><h1>残量の推移</h1><p>取得できた残り割合 · 記録を期限なしで保存</p></div><span id="updated"></span></header>
+<div class="history-controls">
+<label for="period">表示期間</label><select id="period"><option value="1">24時間</option><option value="7">7日</option><option value="30">30日</option><option value="90">90日</option></select>
+<label for="day">終了日</label><input id="day" type="date"><button id="previous" aria-label="前の期間">←</button><button id="next" aria-label="次の期間">→</button><button id="latest">最新へ</button><button id="export">CSV保存</button>
+</div><p id="range" aria-live="polite"></p><p id="notice" role="status"></p><p id="history-error" role="alert"></p>
 <main>
-<section aria-labelledby="five-title"><h2 id="five-title">5時間枠 <span id="five-value">—</span></h2><svg id="five-chart" viewBox="0 0 680 180" role="img" aria-label="5時間枠の直近24時間の残り割合"></svg></section>
-<section aria-labelledby="week-title"><h2 id="week-title">7日間枠 <span id="week-value">—</span></h2><svg id="week-chart" viewBox="0 0 680 180" role="img" aria-label="7日間枠の直近24時間の残り割合"></svg></section>
+<section aria-labelledby="five-title"><h2 id="five-title">5時間枠 <span id="five-value">—</span></h2><svg id="five-chart" viewBox="0 0 680 180" role="img" aria-label="5時間枠の選択期間の残り割合"></svg></section>
+<section aria-labelledby="week-title"><h2 id="week-title">7日間枠 <span id="week-value">—</span></h2><svg id="week-chart" viewBox="0 0 680 180" role="img" aria-label="7日間枠の選択期間の残り割合"></svg></section>
 </main>
 <p id="reading" aria-live="polite">点にカーソルを合わせると、時刻と残り割合を確認できます。</p>
 <p id="cloud-status" role="status"></p><button id="cloud-setup">スリープ中の記録を設定</button>
-<footer>記録は導入後から。取得できなかった時間は空白です。クラウド同期を設定するとPCの停止中・スリープ中の記録も取り込めます。</footer>
+<footer>保存した記録は自動削除しません。長い期間では表示だけを間引き、CSVには選択期間の全実測値を保存します。記録は導入後から。取得できなかった時間は空白です。クラウド同期を設定するとPCの停止中・スリープ中の記録も取り込めます。</footer>
 </body></html>

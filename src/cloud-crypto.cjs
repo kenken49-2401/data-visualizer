@@ -14,7 +14,9 @@ function seal(value, key, purpose) {
   cipher.setAAD(Buffer.from(`codex-usage:${purpose}:1`));
   const data = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
   if (data.length > MAX_BYTES) throw new Error('Oversized recording');
-  return JSON.stringify({ schema: 1, iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: data.toString('base64') });
+  const encoded = JSON.stringify({ schema: 1, iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: data.toString('base64') });
+  if (Buffer.byteLength(encoded) > MAX_BYTES) throw new Error('Oversized recording');
+  return encoded;
 }
 function open(text, key, purpose) {
   if (typeof text !== 'string' || Buffer.byteLength(text) > MAX_BYTES) throw new Error('Invalid recording');

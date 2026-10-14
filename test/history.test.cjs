@@ -9,7 +9,7 @@ const second = accountKey({ type: 'chatgpt', email: 'second@example.invalid' });
 function sample(at, fiveHour = 60, weekly = 40, status = 'ready') {
   return { updatedAt: at, status, usage: { fiveHour: { remainingPercent: fiveHour }, weekly: { remainingPercent: weekly } } };
 }
-test('keeps a bounded 24-hour history across restart without exposing it before account verification', t => {
+test('keeps the default 24-hour view across restart without exposing it before account verification', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-history-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   let now = 3 * DAY; const history = new HistoryStore(dir, () => now);
   history.selectAccount(first); history.capture(sample(now - DAY), 60); history.capture(sample(now), 60);

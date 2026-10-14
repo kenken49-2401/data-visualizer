@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, shell, session, powerMonitor, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, shell, session, powerMonitor, safeStorage, dialog } = require('electron');
 const { spawn } = require('node:child_process');
 const { readFileSync, mkdirSync, writeFileSync } = require('node:fs');
 const { createInterface } = require('node:readline');
@@ -10,6 +10,8 @@ const { UsageService } = require('./usage-service.cjs');
 const { demoUsage, publicError } = require('./usage.cjs');
 const { bottomLeft, keepOnScreen } = require('./position.cjs');
 const { HistoryStore, accountKey } = require('./history.cjs');
+const { validateRange } = require('./history-data.cjs');
+const { historyCsv } = require('./history-csv.cjs');
 const { CloudConfig, CloudSync, validAuthUrl } = require('./cloud-sync.cjs');
 const { SettingsStore, SIZES } = require('./settings.cjs');
 const { UpdateManager } = require('./updater.cjs');
@@ -31,6 +33,7 @@ if (process.env.CODEX_USAGE_RUNTIME_DIR) {
 if (smoke) app.commandLine.appendSwitch('disable-gpu');
 const pageFile = path.join(__dirname, 'ui', 'index.html');
 let historyWindow, history, historyCheck, historyGeneration = 0;
+let historyRange = null;
 let cloudWindow, cloudConfig, cloudSync;
 const cloudFile = path.join(__dirname, 'ui', 'cloud.html');
 const historyFile = path.join(__dirname, 'ui', 'history.html');
@@ -40,7 +43,11 @@ let loginPending = false, loginId = null, userHidden = false, userMinimized = fa
 let state = demo ? { status: 'demo', usage: demoUsage(), updatedAt: Date.now(), error: null }
   : { status: 'loading', usage: null, updatedAt: null, error: null };
 
-function historyModel() { return { ...history.snapshot(), demo, cloud: cloudSync?.state ?? { status: 'disabled' } }; }
+function historyModel() {
+  const snapshot = history.snapshot(historyRange), cloud = cloudSync?.state ?? { status: 'disabled' };
+  if (history.key && cloud.archive) snapshot.earliestAt = Math.min(snapshot.earliestAt ?? Infinity, Date.parse(cloud.archive.firstDay));
+  return { ...snapshot, demo, cloud };
+}
 function notifyHistory() {
   if (historyWindow && !historyWindow.isDestroyed() && !historyWindow.webContents.isLoading()) historyWindow.webContents.send('history:state', historyModel());
 }
@@ -67,7 +74,8 @@ async function recordHistory(next) {
 }
 async function showHistory() {
   if (historyWindow && !historyWindow.isDestroyed()) { if (historyWindow.isMinimized()) historyWindow.restore(); historyWindow.show(); historyWindow.focus(); return; }
-  const created = new BrowserWindow({ width: 760, height: 720, minWidth: 480, minHeight: 540, title: 'Codex 残量の推移 · 24時間',
+  historyRange = null;
+  const created = new BrowserWindow({ width: 800, height: 720, minWidth: 480, minHeight: 540, title: 'Codex 残量の履歴',
     backgroundColor: '#090d14', autoHideMenuBar: true, show: false,
     icon: path.join(__dirname, 'ui', 'tray.png'),
     webPreferences: { preload: path.join(__dirname, 'history-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false } });
@@ -188,7 +196,7 @@ function contextMenu() {
     { label: '最前面に表示', type: 'checkbox', checked: settings.alwaysOnTop, click: item => updateSettings({ alwaysOnTop: item.checked }) },
     { type: 'separator' },
     { label: '使用量の更新間隔', submenu: [60, 120, 180, 300].map(seconds => ({ label: `${seconds / 60}分`, type: 'radio', checked: settings.intervalSeconds === seconds, click: () => updateSettings({ intervalSeconds: seconds }) })) },
-    { label: '24時間の残量グラフ', click: () => void showHistory() },
+    { label: '残量の履歴グラフ', click: () => void showHistory() },
     { label: 'スリープ中の記録を設定', click: () => void showCloud() },
     { label: '今すぐ使用量を更新', enabled: !demo, click: () => void service?.refresh() },
     { label: 'ChatGPT アカウントでログイン', enabled: !demo, click: () => void login() },
@@ -312,6 +320,13 @@ async function smokeCheck() {
   await historyWindow.webContents.executeJavaScript(`document.querySelector('.dot').dispatchEvent(new PointerEvent('pointerenter'))`);
   if (!await historyWindow.webContents.executeJavaScript(`document.querySelector('#reading').textContent.includes('残り')`)) throw new Error('History point tooltip failed');
   writeFileSync(path.join(app.getPath('userData'), 'history.png'), (await historyWindow.webContents.capturePage()).toPNG());
+  await historyWindow.webContents.executeJavaScript(`document.querySelector('#period').value = '7'; document.querySelector('#period').dispatchEvent(new Event('change'))`);
+  await wait();
+  if (!await historyWindow.webContents.executeJavaScript(`document.querySelector('#range').textContent.includes('件') && Array.from(document.querySelectorAll('.dot title')).some(t => t.textContent.includes('81%'))`)) throw new Error('Historical period did not reveal older readings');
+  await historyWindow.webContents.executeJavaScript(`document.querySelector('#previous').click()`); await wait();
+  if (!await historyWindow.webContents.executeJavaScript(`document.querySelector('#day').value !== ''`)) throw new Error('Historical day navigation failed');
+  await historyWindow.webContents.executeJavaScript(`document.querySelector('#latest').click()`); await wait();
+  if (!await historyWindow.webContents.executeJavaScript(`document.querySelector('#day').value === '' && document.querySelector('#period').value === '1'`)) throw new Error('History failed to return to latest');
   historyWindow.close();
   await showHistory(); await wait();
   history.suspend(); notifyHistory(); await wait();
@@ -333,6 +348,7 @@ else {
     if (demo) {
       history.selectAccount(accountKey({ type: 'chatgpt', email: 'demo@example.invalid' }));
       const now = Date.now();
+      history.merge({ account: history.key, points: [{ at: now - 3 * 86400000, fiveHour: 81, weekly: 65, gapMs: 130000 }] });
       for (let i = 0; i < 145; i++) {
         if (i > 50 && i < 65) continue;
         const at = now - (144 - i) * 600000;
@@ -369,7 +385,21 @@ else {
     handler('usage:menu', () => contextMenu().popup({ window }));
     handler('usage:restart', restart);
     handler('usage:history', showHistory);
-    ipcMain.handle('history:get', event => { guard(event, historyWindow, historyFile); return historyModel(); });
+    ipcMain.handle('history:get', (event, range) => {
+      guard(event, historyWindow, historyFile); historyRange = range == null ? null : validateRange(range);
+      if (!demo) void cloudSync?.loadRange(historyRange ?? validateRange(null));
+      return historyModel();
+    });
+    ipcMain.handle('history:export', async event => {
+      guard(event, historyWindow, historyFile); const key = history.key, range = historyRange;
+      if (!key || cloudSync?.state.archiveStatus === 'loading') throw new Error('History not ready');
+      const data = history.snapshot(range);
+      const result = await dialog.showSaveDialog(historyWindow, { title: '選択期間の残量をCSV保存', defaultPath: 'codex-usage-history.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] });
+      if (result.canceled || !result.filePath) return { saved: false };
+      if (key !== history.key) throw new Error('Account changed');
+      await require('node:fs/promises').writeFile(result.filePath, historyCsv(data.points), { encoding: 'utf8', mode: 0o600 });
+      return { saved: true, count: data.points.length };
+    });
     ipcMain.handle('history:cloud', event => { guard(event, historyWindow, historyFile); return showCloud(); });
     const cloudHandler = (name, fn) => ipcMain.handle(name, (event, ...args) => { guard(event, cloudWindow, cloudFile); return fn(...args); });
     cloudHandler('cloud:get', cloudModel);
