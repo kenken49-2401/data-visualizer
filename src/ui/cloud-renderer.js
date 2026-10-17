@@ -5,6 +5,7 @@ function render(data) {
   document.querySelector('#status').textContent = (labels[data.status] || '接続を確認してください。') + (data.recordedAt ? ` 最後の記録：${new Date(data.recordedAt).toLocaleString('ja-JP')}` : '');
   document.querySelector('#generate').disabled = data.configured || !data.available;
   document.querySelector('#disable').disabled = !data.configured;
+  document.querySelector('#copy-view-key').disabled = !data.configured || !data.available;
   document.querySelector('#challenge').hidden = !data.challenge;
   document.querySelector('#code').textContent = data.challenge?.userCode || '';
   if (!data.available) document.querySelector('#error').textContent = 'OSの暗号化保存が利用できません。このPCでは設定できません。';
@@ -13,6 +14,7 @@ async function action(fn) { document.querySelector('#error').textContent = ''; t
 document.querySelector('#generate').onclick = () => action(async () => { const key = await api.generate(); document.querySelector('#master').value = key; document.querySelector('#key-panel').hidden = false; });
 document.querySelector('#install').onclick = () => action(async () => { await api.install(document.querySelector('#existing').value.trim()); document.querySelector('#existing').value = ''; });
 document.querySelector('#disable').onclick = () => action(async () => { await api.disable(); document.querySelector('#master').value = ''; document.querySelector('#key-panel').hidden = true; });
+document.querySelector('#copy-view-key').onclick = () => action(async () => { await api.copyViewKey(); document.querySelector('#copy-result').textContent = '閲覧用の鍵をコピーしました。オンラインページに貼り付けてください。'; });
 document.querySelector('#check').onclick = () => action(() => api.check());
 for (const button of document.querySelectorAll('[data-open]')) button.onclick = () => action(() => api.open(button.dataset.open));
 api.subscribe(render); api.get().then(render);

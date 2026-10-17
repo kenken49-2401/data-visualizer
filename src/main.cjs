@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, shell, session, powerMonitor, safeStorage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, shell, session, powerMonitor, safeStorage, dialog, clipboard } = require('electron');
 const { spawn } = require('node:child_process');
 const { readFileSync, mkdirSync, writeFileSync } = require('node:fs');
 const { createInterface } = require('node:readline');
@@ -12,6 +12,7 @@ const { bottomLeft, keepOnScreen } = require('./position.cjs');
 const { HistoryStore, accountKey } = require('./history.cjs');
 const { validateRange } = require('./history-data.cjs');
 const { historyCsv } = require('./history-csv.cjs');
+const { VIEWER_URL, viewerAccessKey } = require('./web-viewer.cjs');
 const { CloudConfig, CloudSync, validAuthUrl } = require('./cloud-sync.cjs');
 const { SettingsStore, SIZES } = require('./settings.cjs');
 const { UpdateManager } = require('./updater.cjs');
@@ -198,6 +199,7 @@ function contextMenu() {
     { label: '使用量の更新間隔', submenu: [60, 120, 180, 300].map(seconds => ({ label: `${seconds / 60}分`, type: 'radio', checked: settings.intervalSeconds === seconds, click: () => updateSettings({ intervalSeconds: seconds }) })) },
     { label: '残量の履歴グラフ', click: () => void showHistory() },
     { label: 'スリープ中の記録を設定', click: () => void showCloud() },
+    { label: 'オンラインで残量の履歴を見る', click: () => void shell.openExternal(VIEWER_URL) },
     { label: '今すぐ使用量を更新', enabled: !demo, click: () => void service?.refresh() },
     { label: 'ChatGPT アカウントでログイン', enabled: !demo, click: () => void login() },
     { type: 'separator' },
@@ -405,10 +407,11 @@ else {
     cloudHandler('cloud:get', cloudModel);
     cloudHandler('cloud:generate', () => { if (demo || cloudConfig.key) throw new Error('Already configured'); const key = cloudConfig.generate(); cloudSync.reset(); void cloudSync.check(); return key; });
     cloudHandler('cloud:install', key => { if (demo || typeof key !== 'string' || key.length !== 64) throw new Error('Invalid key'); cloudConfig.install(key); cloudSync.reset(); void cloudSync.check(); });
+    cloudHandler('cloud:copy-view-key', () => { if (demo) throw new Error('Demo mode'); clipboard.writeText(viewerAccessKey(cloudConfig)); return { copied: true }; });
     cloudHandler('cloud:disable', () => { if (demo) return; cloudConfig.disable(); cloudSync.reset(); });
     cloudHandler('cloud:check', () => demo ? undefined : cloudSync.check());
     cloudHandler('cloud:open', target => {
-      const urls = { secrets: 'https://github.com/kenken49-2401/data-visualizer/settings/secrets/actions', workflow: 'https://github.com/kenken49-2401/data-visualizer/actions/workflows/record-usage.yml', auth: cloudSync.state.challenge?.verificationUrl };
+      const urls = { viewer: VIEWER_URL, secrets: 'https://github.com/kenken49-2401/data-visualizer/settings/secrets/actions', workflow: 'https://github.com/kenken49-2401/data-visualizer/actions/workflows/record-usage.yml', auth: cloudSync.state.challenge?.verificationUrl };
       if (!Object.hasOwn(urls, target) || !urls[target] || target === 'auth' && (!validAuthUrl(urls.auth) || cloudSync.state.challenge.until <= Date.now())) throw new Error('Unexpected destination');
       return shell.openExternal(urls[target]);
     });

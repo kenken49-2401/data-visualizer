@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('cloudRecording', {
   get: () => ipcRenderer.invoke('cloud:get'),
   generate: () => ipcRenderer.invoke('cloud:generate'),
   install: key => ipcRenderer.invoke('cloud:install', key),
+  copyViewKey: () => ipcRenderer.invoke('cloud:copy-view-key'),
   disable: () => ipcRenderer.invoke('cloud:disable'),
   check: () => ipcRenderer.invoke('cloud:check'),
   open: target => ipcRenderer.invoke('cloud:open', target),
