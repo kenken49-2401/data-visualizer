@@ -16,6 +16,7 @@ if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true' || !pr
 }
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'Codex 自動起動 fixture '));
 app.setPath('userData', directory);
+app.disableHardwareAcceleration();
 const RUN = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const APPROVED = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';
 let manager, helper, timer, finishing = false;
@@ -120,6 +121,7 @@ async function main() {
   await waitFor(() => watcherCount() === 1, 'The manager did not start its native helper');
   execFileSync(helper, ['--stop'], { windowsHide: true, stdio: 'pipe', timeout: 7000 });
   await waitFor(() => watcherCount() === 0, 'The fixture helper did not stop before Run-command validation');
+  console.log('Auto-start fixture: replaying Windows-decoded Run command');
   const launched = registeredCommand();
   assert.deepEqual(launched.argv, [helper, '--config', manager.file]);
   // Launch the arguments decoded from the actual Run value without involving
@@ -132,8 +134,10 @@ async function main() {
   await waitFor(() => watcherCount() === 1, 'Executing the actual Run command did not start the native helper');
   await new Promise(resolve => setTimeout(resolve, 1500));
   assert.equal(watcherCount(), 1, 'The registered command did not leave a valid watcher running');
+  console.log('Auto-start fixture: Run command replay remains alive');
 
   // Simulate Task Manager's Startup tab using the exact native Electron API.
+  console.log('Auto-start fixture: applying Task Manager disable');
   app.setLoginItemSettings({ name: RUN_VALUE_NAME, path: helper, args: ['--config', manager.file], openAtLogin: true, enabled: false });
   assert.equal(registration().enabled, false, 'StartupApproved must report Task Manager opt-out');
   const disabledCommand = registryValue(RUN);
@@ -144,7 +148,9 @@ async function main() {
   assert.equal(registration().enabled, false);
   assert(registryValue(RUN).equals(disabledCommand), 'Ordinary reconciliation must not rewrite the opted-out Run command');
   await waitFor(() => watcherCount() === 0, 'The opted-out helper must stay stopped');
+  console.log('Auto-start fixture: Task Manager disable preserved and helper stopped');
 
+  console.log('Auto-start fixture: explicitly re-enabling auto-start');
   const explicit = await manager.reconcile(true, { explicit: true });
   assert.equal(explicit.status, 'enabled', 'An explicit user action must re-enable StartupApproved');
   assert.equal(registration().enabled, true);
@@ -169,6 +175,7 @@ async function finish(error) {
     console.error('::error title=Real Electron auto-start::' + detail.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A'));
   }
   if (manager) {
+    console.log('Auto-start fixture: cleanup starting');
     try {
       const state = await manager.reconcile(false, { explicit: true });
       if (state.status !== 'disabled' || registryValue(RUN) !== null || registryValue(APPROVED) !== null) throw new Error('Auto-start fixture cleanup failed');

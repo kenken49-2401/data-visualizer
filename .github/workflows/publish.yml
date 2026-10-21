@@ -28,11 +28,7 @@ jobs:
           catch { Write-Output ("::error title=Autostart compilation::" + ($_.Exception.Message -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')); throw }
       - run: npm test
       - name: Verify real Windows startup registration and opt-out
-        shell: powershell
-        run: |
-          Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-          & ./node_modules/.bin/electron.cmd ./scripts/autostart-electron-smoke.cjs --synthetic-autostart
-          if ($LASTEXITCODE -ne 0) { throw 'Real Electron startup registration failed' }
+        run: node scripts/autostart-registry-smoke.cjs
       - name: Verify automatic launch with real Windows fixture windows
         shell: powershell
         run: |
