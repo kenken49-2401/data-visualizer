@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const { ChatGPTAutostart, RUN_VALUE_NAME } = require('../src/autostart.cjs');
 
 if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true' || !process.argv.includes('--synthetic-autostart')) {
@@ -35,7 +35,7 @@ function powershellNumber(source) {
   if (!/^\d+$/.test(text)) throw new Error('Could not inspect the native fixture process');
   return Number(text);
 }
-function registeredCommand({ launch = false } = {}) {
+function registeredCommand() {
   // Read only this fixture's Run value, retain its Unicode string, and ask the
   // Windows command-line parser for *all* arguments, including --switches.
   const script = `
@@ -63,23 +63,6 @@ try {
     $arguments.Add([Runtime.InteropServices.Marshal]::PtrToStringUni($item))
   }
 } finally { [void][FixtureCommandLine]::LocalFree($pointer) }
-${launch ? `
-$quotedExecutable = '"' + $arguments[0] + '"'
-if (-not $command.StartsWith($quotedExecutable, [StringComparison]::OrdinalIgnoreCase)) { throw 'The fixture Run executable was not quoted' }
-$start = [Diagnostics.ProcessStartInfo]::new()
-$start.FileName = $arguments[0]
-$start.Arguments = $command.Substring($quotedExecutable.Length).TrimStart()
-$start.UseShellExecute = $false
-$start.CreateNoWindow = $true
-# Give the long-lived GUI child its own pipes; inheriting this PowerShell
-# process's captured stdout/stderr would keep Node waiting for EOF after exit.
-$start.RedirectStandardInput = $true
-$start.RedirectStandardOutput = $true
-$start.RedirectStandardError = $true
-$child = [Diagnostics.Process]::Start($start)
-$child.StandardInput.Close()
-$child.Dispose()
-` : ''}
 $json = ConvertTo-Json -InputObject @{ command = $command; argv = $arguments.ToArray() } -Compress
 [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
 `;
@@ -137,8 +120,15 @@ async function main() {
   await waitFor(() => watcherCount() === 1, 'The manager did not start its native helper');
   execFileSync(helper, ['--stop'], { windowsHide: true, stdio: 'pipe', timeout: 7000 });
   await waitFor(() => watcherCount() === 0, 'The fixture helper did not stop before Run-command validation');
-  const launched = registeredCommand({ launch: true });
+  const launched = registeredCommand();
   assert.deepEqual(launched.argv, [helper, '--config', manager.file]);
+  // Launch the arguments decoded from the actual Run value without involving
+  // a captured shell process or inheriting any of its long-lived pipe handles.
+  await new Promise((resolve, reject) => {
+    const child = spawn(launched.argv[0], launched.argv.slice(1), { detached: true, windowsHide: true, stdio: 'ignore', shell: false });
+    child.once('error', reject);
+    child.once('spawn', () => { child.unref(); resolve(); });
+  });
   await waitFor(() => watcherCount() === 1, 'Executing the actual Run command did not start the native helper');
   await new Promise(resolve => setTimeout(resolve, 1500));
   assert.equal(watcherCount(), 1, 'The registered command did not leave a valid watcher running');

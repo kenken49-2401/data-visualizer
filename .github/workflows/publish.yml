@@ -27,17 +27,17 @@ jobs:
           try { ./scripts/build-watcher.ps1 }
           catch { Write-Output ("::error title=Autostart compilation::" + ($_.Exception.Message -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')); throw }
       - run: npm test
-      - name: Verify automatic launch with real Windows fixture windows
-        shell: powershell
-        run: |
-          try { ./scripts/test-autostart.ps1 }
-          catch { Write-Output ("::error title=Autostart native integration::" + ($_.Exception.Message -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')); throw }
       - name: Verify real Windows startup registration and opt-out
         shell: powershell
         run: |
           Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
           & ./node_modules/.bin/electron.cmd ./scripts/autostart-electron-smoke.cjs --synthetic-autostart
           if ($LASTEXITCODE -ne 0) { throw 'Real Electron startup registration failed' }
+      - name: Verify automatic launch with real Windows fixture windows
+        shell: powershell
+        run: |
+          try { ./scripts/test-autostart.ps1 }
+          catch { Write-Output ("::error title=Autostart native integration::" + ($_.Exception.Message -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')); throw }
       - name: Validate Windows foreground tracker
         shell: powershell
         run: |
