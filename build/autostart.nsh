@@ -6,23 +6,23 @@
   Push $R1
   Push $R2
 
-  ClearErrors
-  FindFirst $R0 $R1 "$APPDATA\codex-usage-overlay\autostart\watcher-*.exe"
-  IfErrors codex_autostart_not_found
+  ; An update applied on normal quit may not restart Electron. Keep the
+  ; independently staged watcher alive so it can launch the new app later.
+  ${ifNot} ${isUpdated}
+    ClearErrors
+    FindFirst $R0 $R1 "$APPDATA\codex-usage-overlay\autostart\watcher-*.exe"
+    IfErrors codex_autostart_not_found
 codex_autostart_find_next:
-  StrCmp $R1 "" codex_autostart_find_done
-  ExecWait '"$APPDATA\codex-usage-overlay\autostart\$R1" --stop' $R2
-  ClearErrors
-  FindNext $R0 $R1
-  IfErrors codex_autostart_find_done
-  Goto codex_autostart_find_next
+    StrCmp $R1 "" codex_autostart_find_done
+    ExecWait '"$APPDATA\codex-usage-overlay\autostart\$R1" --stop' $R2
+    ClearErrors
+    FindNext $R0 $R1
+    IfErrors codex_autostart_find_done
+    Goto codex_autostart_find_next
 codex_autostart_find_done:
-  FindClose $R0
+    FindClose $R0
 codex_autostart_not_found:
 
-  ; electron-builder invokes the old uninstaller while applying an update.
-  ; Keep its registration/configuration until the new app reconciles them.
-  ${ifNot} ${isUpdated}
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "CodexUsageOverlayChatGPTLauncher"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "CodexUsageOverlayChatGPTLauncher"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32" "CodexUsageOverlayChatGPTLauncher"

@@ -61,7 +61,9 @@ jobs:
       - run: npm run smoke:packaged
       - name: Install and launch the Windows app
         shell: pwsh
-        run: ./scripts/test-installer.ps1
+        run: |
+          try { ./scripts/test-installer.ps1 }
+          catch { Write-Output ("::error title=Installer lifecycle::" + ($_.Exception.Message -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A')); throw }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer

@@ -190,11 +190,52 @@ internal static class OverlayFixture {
   if (-not $oldWatcher.HasExited) { throw 'The stop command returned before the old staged process fully exited' }
   if ($oldWatcher.ExitCode -ne 0) { throw 'The old staged helper failed during migration shutdown' }
 
+  # NSIS briefly removes the installed executable while replacing it. A helper
+  # that already validated this installation must survive that gap, without
+  # consuming a launch attempt or forgetting the current ChatGPT window cycle.
+  Save-Config $true
+  $updating = Start-Watcher
+  Start-Sleep -Milliseconds 1200
+  if ($updating.HasExited) { throw 'Watcher exited before the application-update test' }
+  $replacement = $overlay + '.updating'
+  Move-Item -LiteralPath $overlay -Destination $replacement
+  Assert-NoLaunch 3 3300 'Watcher launched an application while its executable was being replaced'
+  if ($updating.HasExited) { throw 'A temporary missing executable stopped an already valid watcher' }
+  $chat = Start-Fixture $chatgpt
+  Wait-Visible $chat
+  Assert-NoLaunch 3 2300 'Watcher attempted to launch the missing executable'
+  if ($updating.HasExited) { throw 'The update grace period ended while ChatGPT was open' }
+  Stop-Fixture $chat
+  Start-Sleep -Milliseconds 3300
+  $chat = Start-Fixture $chatgpt
+  Wait-Visible $chat
+  Assert-NoLaunch 3 1300 'Reopening ChatGPT launched an executable that was still missing'
+  Move-Item -LiteralPath $replacement -Destination $overlay
+  Wait-Condition { (Launch-Count) -eq 4 } 'Restoring the executable did not launch the current unhandled ChatGPT cycle'
+  if (@(Read-Launches)[3] -ne '--chatgpt-autostart') { throw 'The restored executable received incorrect arguments' }
+  Stop-Overlay
+  Move-Item -LiteralPath $overlay -Destination $replacement
+  Assert-NoLaunch 4 2200 'A handled cycle launched while the executable was missing again'
+  if ($updating.HasExited) { throw 'A second temporary update gap stopped the watcher' }
+  Move-Item -LiteralPath $replacement -Destination $overlay
+  Assert-NoLaunch 4 2300 'Restoring an executable forgot the user quit during an already handled cycle'
+  Stop-Fixture $chat
+  Start-Sleep -Milliseconds 3300
+  $chat = Start-Fixture $chatgpt
+  Wait-Visible $chat
+  Wait-Condition { (Launch-Count) -eq 5 } 'The watcher did not launch a fresh ChatGPT cycle after an application update'
+  Stop-Fixture $chat
+  Stop-Overlay
+  $updateStop = Start-Fixture $watcher '--stop'
+  Wait-Exit $updateStop 'The update-surviving watcher could not be stopped'
+  Wait-Exit $updating 'The update-surviving watcher did not exit'
+  Write-Output 'Auto-start: temporary replacement survives; restore launches only an unhandled cycle and preserves manual quit'
+
   Save-Config $true (Join-Path $directory 'missing application.exe')
   $missing = Start-Watcher
   Wait-Exit $missing 'A missing application must not leave a watcher running'
-  if ((Launch-Count) -ne 3) { throw 'Disabling, stopping or a missing executable unexpectedly launched an application' }
-  Write-Output 'Windows auto-start integration passed: GUI subsystem, visible windows, duplicate prevention, manual quit, reopen, disable, stop and missing executable'
+  if ((Launch-Count) -ne 5) { throw 'Disabling, stopping or an initially missing executable unexpectedly launched an application' }
+  Write-Output 'Windows auto-start integration passed: GUI subsystem, visible windows, duplicate prevention, manual quit, reopen, disable, stop, staged helper migration and executable replacement'
 } finally {
   # Stop the watcher and all directly owned processes before finding its child,
   # so a failing assertion cannot race one final auto-launch during cleanup.

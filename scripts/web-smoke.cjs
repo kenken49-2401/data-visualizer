@@ -40,7 +40,13 @@ async function main() {
   child.on('error', error => { clearTimeout(timer); displayServer?.kill(); console.error('Web smoke launch failed:', error.code); process.exitCode = 1; });
   child.on('exit', code => {
     clearTimeout(timer); displayServer?.kill();
-    if (code !== 0 || !output.includes('Web smoke: passed')) { console.error('Web smoke failed:', code, diagnostics); process.exitCode = 1; }
+    if (code !== 0 || !output.includes('Web smoke: passed')) {
+      console.error('Web smoke failed:', code, diagnostics); process.exitCode = 1;
+      if (process.env.GITHUB_ACTIONS === 'true') {
+        const details = `exit=${code}; stdout=${output.slice(-2000)}; diagnostics=${diagnostics.slice(-3500)}`;
+        console.error('::error title=Web browser smoke diagnostics::' + details.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A'));
+      }
+    }
     else console.log('Web screenshots:', path.join(directory, 'desktop.png'), path.join(directory, 'mobile.png'));
   });
 }

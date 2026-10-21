@@ -24,13 +24,60 @@ function registryValue(key) {
   try { return execFileSync('reg.exe', ['query', key, '/v', RUN_VALUE_NAME], { windowsHide: true, stdio: 'pipe', timeout: 5000 }); }
   catch (error) { if (error.status === 1) return null; throw new Error('Could not inspect the fixture registry value'); }
 }
-function powershellNumber(source) {
-  const encoded = Buffer.from(source, 'utf16le').toString('base64');
+function powershellOutput(source) {
+  const encoded = Buffer.from("$ErrorActionPreference = 'Stop'\n" + source, 'utf16le').toString('base64');
   const output = execFileSync(path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true, stdio: 'pipe', timeout: 10000 });
-  const text = output.toString('utf8').trim();
+  return output.toString('utf8').trim();
+}
+function powershellNumber(source) {
+  const text = powershellOutput(source);
   if (!/^\d+$/.test(text)) throw new Error('Could not inspect the native fixture process');
   return Number(text);
+}
+function registeredCommand({ launch = false } = {}) {
+  // Read only this fixture's Run value, retain its Unicode string, and ask the
+  // Windows command-line parser for *all* arguments, including --switches.
+  const script = `
+$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Run')
+try { $command = [string]$key.GetValue('${RUN_VALUE_NAME}', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) }
+finally { $key.Dispose() }
+if ([string]::IsNullOrEmpty($command)) { throw 'The fixture Run command is missing' }
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class FixtureCommandLine {
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern IntPtr CommandLineToArgvW(string command, out int count);
+  [DllImport("kernel32.dll")]
+  public static extern IntPtr LocalFree(IntPtr memory);
+}
+'@
+$count = 0
+$pointer = [FixtureCommandLine]::CommandLineToArgvW($command, [ref]$count)
+if ($pointer -eq [IntPtr]::Zero) { throw 'Windows could not parse the fixture Run command' }
+$arguments = [Collections.Generic.List[string]]::new()
+try {
+  for ($index = 0; $index -lt $count; $index++) {
+    $item = [Runtime.InteropServices.Marshal]::ReadIntPtr($pointer, $index * [IntPtr]::Size)
+    $arguments.Add([Runtime.InteropServices.Marshal]::PtrToStringUni($item))
+  }
+} finally { [void][FixtureCommandLine]::LocalFree($pointer) }
+${launch ? `
+$quotedExecutable = '"' + $arguments[0] + '"'
+if (-not $command.StartsWith($quotedExecutable, [StringComparison]::OrdinalIgnoreCase)) { throw 'The fixture Run executable was not quoted' }
+$start = [Diagnostics.ProcessStartInfo]::new()
+$start.FileName = $arguments[0]
+$start.Arguments = $command.Substring($quotedExecutable.Length).TrimStart()
+$start.UseShellExecute = $false
+$start.CreateNoWindow = $true
+$child = [Diagnostics.Process]::Start($start)
+$child.Dispose()
+` : ''}
+$json = ConvertTo-Json -InputObject @{ command = $command; argv = $arguments.ToArray() } -Compress
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+`;
+  return JSON.parse(Buffer.from(powershellOutput(script), 'base64').toString('utf8'));
 }
 function watcherCount() {
   const name = path.basename(helper, '.exe').replace(/'/g, "''"), exact = helper.replace(/'/g, "''");
@@ -42,13 +89,17 @@ async function waitFor(check, message) {
   throw new Error(message);
 }
 function registration() {
-  // Electron 44 parses this lookup as a Windows command line. Quote only the
-  // executable lookup; getLoginItemSettings decodes actual arguments for us.
+  // Electron's launchItems.args uses Chromium GetArgs(), which intentionally
+  // omits --switches. Validate that projection, then independently validate
+  // the actual Run command with Windows' native parser below.
   const settings = app.getLoginItemSettings({ path: `"${helper}"`, args: ['--config', manager.file] });
   const item = settings.launchItems?.find(value => value.name === RUN_VALUE_NAME && value.scope === 'user');
   assert(item, 'The custom current-user Run entry must be visible to real Electron');
   assert.equal(path.resolve(item.path).toLowerCase(), path.resolve(helper).toLowerCase(), 'Run executable must be the staged helper');
-  assert.deepEqual(item.args, ['--config', manager.file], 'Spaces and Japanese characters must survive native command-line quoting');
+  assert.deepEqual(item.args, [manager.file], 'The positional configuration path must survive Electron quoting');
+  const registered = registeredCommand();
+  assert.equal(path.resolve(registered.argv[0]).toLowerCase(), path.resolve(helper).toLowerCase());
+  assert.deepEqual(registered.argv.slice(1), ['--config', manager.file], 'The actual Run command must retain its flag and exact Unicode path');
   return item;
 }
 async function main() {
@@ -78,6 +129,13 @@ async function main() {
   assert.equal(registration().enabled, true);
   assert(registryValue(RUN), 'Electron must create the actual HKCU Run value');
   await waitFor(() => watcherCount() === 1, 'The manager did not start its native helper');
+  execFileSync(helper, ['--stop'], { windowsHide: true, stdio: 'pipe', timeout: 7000 });
+  await waitFor(() => watcherCount() === 0, 'The fixture helper did not stop before Run-command validation');
+  const launched = registeredCommand({ launch: true });
+  assert.deepEqual(launched.argv, [helper, '--config', manager.file]);
+  await waitFor(() => watcherCount() === 1, 'Executing the actual Run command did not start the native helper');
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  assert.equal(watcherCount(), 1, 'The registered command did not leave a valid watcher running');
 
   // Simulate Task Manager's Startup tab using the exact native Electron API.
   app.setLoginItemSettings({ name: RUN_VALUE_NAME, path: helper, args: ['--config', manager.file], openAtLogin: true, enabled: false });

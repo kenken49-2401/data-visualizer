@@ -49,7 +49,7 @@ internal static class ChatGptLaunchWatcher
     {
         public string AppPath;
     }
-    private enum ConfigResult { Ready, Stop, Retry }
+    private enum ConfigResult { Ready, MissingApplication, Stop, Retry }
 
     [STAThread]
     private static void Main(string[] arguments)
@@ -81,7 +81,8 @@ internal static class ChatGptLaunchWatcher
         if (arguments.Length != 2 || arguments[0] != "--config" || !IsAbsolutePath(arguments[1])) return;
         string configPath = Path.GetFullPath(arguments[1]);
         Config initial;
-        if (ReadConfig(configPath, out initial) == ConfigResult.Stop) return;
+        ConfigResult initialResult = ReadConfig(configPath, out initial);
+        if (initialResult == ConfigResult.Stop || initialResult == ConfigResult.MissingApplication) return;
 
         using (Mutex instance = new Mutex(false, mutexName))
         {
@@ -93,7 +94,7 @@ internal static class ChatGptLaunchWatcher
             {
                 using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.ManualReset, stopName))
                 {
-                    Watch(configPath, session, stop);
+                    Watch(configPath, session, stop, initialResult == ConfigResult.Ready);
                 }
             }
             finally { instance.ReleaseMutex(); }
@@ -234,9 +235,9 @@ internal static class ChatGptLaunchWatcher
             if (!(bool)enabled) return ConfigResult.Stop;
             if (!raw.TryGetValue("appPath", out path) || !(path is string) || !IsAbsolutePath((string)path)) return ConfigResult.Stop;
             string appPath = CanonicalPath((string)path);
-            if (!String.Equals(Path.GetExtension(appPath), ".exe", StringComparison.OrdinalIgnoreCase) || !File.Exists(appPath)) return ConfigResult.Stop;
+            if (!String.Equals(Path.GetExtension(appPath), ".exe", StringComparison.OrdinalIgnoreCase)) return ConfigResult.Stop;
             result = new Config { AppPath = appPath };
-            return ConfigResult.Ready;
+            return File.Exists(appPath) ? ConfigResult.Ready : ConfigResult.MissingApplication;
         }
         catch (FileNotFoundException) { return ConfigResult.Stop; }
         catch (DirectoryNotFoundException) { return ConfigResult.Stop; }
@@ -244,11 +245,13 @@ internal static class ChatGptLaunchWatcher
         catch { return ConfigResult.Retry; }
     }
 
-    private static void Watch(string configPath, int session, EventWaitHandle stop)
+    private static void Watch(string configPath, int session, EventWaitHandle stop, bool applicationSeen)
     {
         bool cycleHandled = false;
-        DateTime? absentSince = null;
-        DateTime retryAt = DateTime.MinValue;
+        long? absentSince = null;
+        long? applicationMissingSince = null;
+        long retryAt = 0;
+        Stopwatch elapsed = Stopwatch.StartNew();
         int launchFailures = 0, invalidConfig = 0;
         while (!stop.WaitOne(0))
         {
@@ -262,21 +265,36 @@ internal static class ChatGptLaunchWatcher
                 continue;
             }
             invalidConfig = 0;
-            DateTime now = DateTime.UtcNow;
+            long now = elapsed.ElapsedMilliseconds;
+            bool applicationAvailable = result == ConfigResult.Ready;
+            if (applicationAvailable)
+            {
+                applicationSeen = true;
+                applicationMissingSince = null;
+            }
+            else
+            {
+                if (!applicationSeen) return;
+                if (!applicationMissingSince.HasValue) applicationMissingSince = now;
+                // NSIS can replace the installed executable after a normal
+                // app quit without restarting Electron. Keep the separate
+                // watcher alive through this bounded replacement interval.
+                if (now - applicationMissingSince.Value >= 120000) return;
+            }
             if (HasChatGptWindow(session))
             {
                 absentSince = null;
-                if (!cycleHandled && now >= retryAt)
+                if (!cycleHandled && applicationAvailable && File.Exists(config.AppPath) && now >= retryAt)
                 {
                     if (IsOverlayRunning(config.AppPath, session) || TryLaunch(config.AppPath))
                     {
                         cycleHandled = true;
                         launchFailures = 0;
                     }
-                    else
+                    else if (File.Exists(config.AppPath))
                     {
                         launchFailures++;
-                        retryAt = now.AddSeconds(30);
+                        retryAt = now + 30000;
                         if (launchFailures >= MaximumLaunchFailures) cycleHandled = true;
                     }
                 }
@@ -284,11 +302,11 @@ internal static class ChatGptLaunchWatcher
             else
             {
                 if (!absentSince.HasValue) absentSince = now;
-                if ((now - absentSince.Value).TotalSeconds >= 2)
+                if (now - absentSince.Value >= 2000)
                 {
                     cycleHandled = false;
                     launchFailures = 0;
-                    retryAt = DateTime.MinValue;
+                    retryAt = 0;
                 }
             }
             if (stop.WaitOne(PollMilliseconds)) return;
