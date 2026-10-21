@@ -1,6 +1,6 @@
 {
   "name": "codex-usage-overlay",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "Windows overlay for Codex five-hour and weekly usage",
   "main": "src/main.cjs",
@@ -17,7 +17,8 @@
     "install:electron": "install-electron --no",
     "publish:update": "node scripts/publish-update.cjs",
     "dist:win": "electron-builder --win nsis --x64 --publish never",
-    "smoke:packaged": "node scripts/smoke.cjs --packaged"
+    "smoke:packaged": "node scripts/smoke.cjs --packaged",
+    "predist:win": "powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/build-watcher.ps1"
   },
   "dependencies": {
     "@openai/codex": "0.160.0",
@@ -65,7 +66,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Codex Usage Overlay",
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "include": "build/autostart.nsh"
     },
     "publish": [
       {
@@ -73,6 +75,12 @@
         "owner": "kenken49-2401",
         "repo": "data-visualizer",
         "releaseType": "release"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "build/chatgpt-launch-watcher.exe",
+        "to": "chatgpt-launch-watcher.exe"
       }
     ]
   }

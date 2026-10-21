@@ -18,6 +18,7 @@ const { SettingsStore, SIZES } = require('./settings.cjs');
 const { UpdateManager } = require('./updater.cjs');
 const { visibleForChatGPT } = require('./visibility.cjs');
 const { InstallerUpdater } = require('./installer-updater.cjs');
+const { ChatGPTAutostart } = require('./autostart.cjs');
 const { matchesDocument } = require('./document-origin.cjs');
 const version = require('../package.json').version;
 const demo = process.argv.includes('--demo');
@@ -38,7 +39,7 @@ let historyRange = null;
 let cloudWindow, cloudConfig, cloudSync;
 const cloudFile = path.join(__dirname, 'ui', 'cloud.html');
 const historyFile = path.join(__dirname, 'ui', 'history.html');
-let window, tray, tracker, service, client, store, updater, savePositionTimer, loginTimer;
+let window, tray, tracker, service, client, store, updater, autostart, savePositionTimer, loginTimer;
 let settings, tracked = null, trackerFailed = false;
 let loginPending = false, loginId = null, userHidden = false, userMinimized = false;
 let state = demo ? { status: 'demo', usage: demoUsage(), updatedAt: Date.now(), error: null }
@@ -117,7 +118,7 @@ function model() {
 }
 function notify() {
   if (window && !window.isDestroyed() && !window.webContents.isLoading()) window.webContents.send('usage:state', model());
-  if (tray) {
+  if (tray && !tray.isDestroyed()) {
     const quota = state.usage;
     const value = entry => entry ? `${Math.round(entry.remainingPercent)}%` : '—';
     tray.setToolTip(`Codex 残り使用量 · 5h ${value(quota?.fiveHour)} / 7d ${value(quota?.weekly)}${state.status === 'stale' ? '（前回取得値）' : ''}`);
@@ -125,10 +126,16 @@ function notify() {
 }
 function updateSettings(patch) {
   settings = store.update(patch);
+  if (Object.hasOwn(patch, 'autoStartChatGPT')) void configureAutostart(true);
   service?.setIntervalMs(settings.intervalSeconds * 1000);
   if (updater) settings.autoUpdates ? updater.start() : updater.stop();
   window?.setAlwaysOnTop(settings.alwaysOnTop, 'floating');
   place(); buildMenu(); notify();
+}
+async function configureAutostart(explicit = false) {
+  if (!autostart) return;
+  await autostart.reconcile(settings.autoStartChatGPT, { explicit });
+  buildMenu(); notify();
 }
 function setAutomaticVisibility(visible) {
   // Keep the running taskbar button while the panel is suppressed.
@@ -194,6 +201,9 @@ function contextMenu() {
     })) },
     { label: '大きさ', submenu: [['tiny', '最小'], ['compact', 'コンパクト'], ['comfortable', 'ゆったり']].map(([size, label]) => ({ label, type: 'radio', checked: settings.size === size, click: () => updateSettings({ size }) })) },
     { label: 'ChatGPTが最前面のときだけ表示', type: 'checkbox', checked: settings.chatgptOnly, enabled: process.platform === 'win32', click: item => updateSettings({ chatgptOnly: item.checked }) },
+    { label: 'ChatGPTを開いたら自動起動', type: 'checkbox', checked: settings.autoStartChatGPT && !['os-disabled', 'error'].includes(autostart?.state.status), enabled: autostart?.state.supported === true, click: item => updateSettings({ autoStartChatGPT: item.checked }) },
+    ...(autostart?.state.status === 'error' ? [{ label: '自動起動：設定できませんでした。オンにして再試行', enabled: false }] : []),
+    ...(autostart?.state.status === 'os-disabled' ? [{ label: '自動起動：Windowsのスタートアップで無効です', enabled: false }] : []),
     { label: '最前面に表示', type: 'checkbox', checked: settings.alwaysOnTop, click: item => updateSettings({ alwaysOnTop: item.checked }) },
     { type: 'separator' },
     { label: '使用量の更新間隔', submenu: [60, 120, 180, 300].map(seconds => ({ label: `${seconds / 60}分`, type: 'radio', checked: settings.intervalSeconds === seconds, click: () => updateSettings({ intervalSeconds: seconds }) })) },
@@ -213,7 +223,7 @@ function contextMenu() {
     { label: '終了', click: () => app.quit() },
   ]);
 }
-function buildMenu() { if (tray) tray.setContextMenu(contextMenu()); }
+function buildMenu() { if (tray && !tray.isDestroyed()) tray.setContextMenu(contextMenu()); }
 function restart() {
   if (updater?.state.status !== 'ready') return;
   if (app.isPackaged) { updater.install(); return; }
@@ -344,7 +354,7 @@ async function smokeCheck() {
 }
 if (!app.requestSingleInstanceLock() && !smoke) app.quit();
 else {
-  app.on('second-instance', () => { if (window && !window.isDestroyed()) restore(); });
+  app.on('second-instance', (_event, args) => { if (!args.includes('--chatgpt-autostart') && window && !window.isDestroyed()) restore(); });
   app.whenReady().then(async () => {
     history = new HistoryStore(demo ? null : app.getPath('userData'));
     if (demo) {
@@ -361,6 +371,7 @@ else {
     cloudConfig = new CloudConfig(app.getPath('userData'), safeStorage);
     cloudSync = new CloudSync(cloudConfig, history); cloudSync.on('state', notifyCloud);
     store = new SettingsStore(app.getPath('userData')); settings = store.value;
+    autostart = new ChatGPTAutostart({ app, disabled: demo || smoke });
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
     window = new BrowserWindow({ ...SIZES[settings.size], frame: false, transparent: true, roundedCorners: true,
@@ -421,6 +432,7 @@ else {
     }
     await window.loadFile(path.join(__dirname, 'ui', 'index.html')); place();
     if (demo) { if (smoke) { await new Promise(resolve => setTimeout(resolve, 200)); await smokeCheck(); } return; }
+    void configureAutostart();
     client = new CodexClient(); service = new UsageService(client, { intervalMs: settings.intervalSeconds * 1000 });
     service.on('state', next => { state = next; notify(); void recordHistory(next); });
     client.on('notification', (method, params) => {

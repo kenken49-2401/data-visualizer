@@ -1,5 +1,6 @@
 node_modules/
 dist/
+build/chatgpt-launch-watcher.exe
 .cache/
 *.log
 core

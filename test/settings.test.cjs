@@ -10,7 +10,7 @@ test('persists position, size and polling interval across a restart', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-settings-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new SettingsStore(dir);
-  store.update({ mode: 'manual', x: -1000, y: 350, size: 'tiny', intervalSeconds: 180, autoUpdates: false });
+  store.update({ mode: 'manual', x: -1000, y: 350, size: 'tiny', intervalSeconds: 180, autoUpdates: false, autoStartChatGPT: false });
   assert.deepEqual(new SettingsStore(dir).value, store.value);
 });
 test('preserves corrupt settings and recovers without losing the original file', t => {
