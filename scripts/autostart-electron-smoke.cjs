@@ -71,7 +71,13 @@ $start.FileName = $arguments[0]
 $start.Arguments = $command.Substring($quotedExecutable.Length).TrimStart()
 $start.UseShellExecute = $false
 $start.CreateNoWindow = $true
+# Give the long-lived GUI child its own pipes; inheriting this PowerShell
+# process's captured stdout/stderr would keep Node waiting for EOF after exit.
+$start.RedirectStandardInput = $true
+$start.RedirectStandardOutput = $true
+$start.RedirectStandardError = $true
 $child = [Diagnostics.Process]::Start($start)
+$child.StandardInput.Close()
 $child.Dispose()
 ` : ''}
 $json = ConvertTo-Json -InputObject @{ command = $command; argv = $arguments.ToArray() } -Compress
