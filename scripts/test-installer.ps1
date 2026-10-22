@@ -31,6 +31,8 @@ New-Item -ItemType Directory -Force $runtime | Out-Null
 $process = Start-Process $installer -ArgumentList @('/S', "/D=$directory") -PassThru
 if (-not $process.WaitForExit(120000)) { $process.Kill(); throw 'Installer timeout' }
 if ($process.ExitCode -ne 0) { throw 'Installer failed' }
+$process.Dispose()
+$process = $null
 $executable = Join-Path $directory 'Codex Usage Overlay.exe'
 if (-not (Test-Path $executable)) { throw 'Installed executable missing' }
 $env:CODEX_USAGE_RUNTIME_DIR = $runtime
@@ -39,6 +41,8 @@ $process = Start-Process $executable -ArgumentList @('--demo', '--smoke') -PassT
 if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Installed app timeout' }
 $result = Get-Content (Join-Path $runtime 'smoke-result.json') -Raw | ConvertFrom-Json
 if ($process.ExitCode -ne 0 -or -not $result.passed -or $result.version -ne $version) { throw 'Installed renderer smoke failed' }
+$process.Dispose()
+$process = $null
 if ((Test-Path $autostartDirectory) -or (Test-OwnStartupRegistration)) { throw 'Demo/smoke unexpectedly enabled autostart' }
 $codex = Get-ChildItem $directory -Filter codex.exe -Recurse | Select-Object -First 1
 if (-not $codex) { throw 'Bundled native Codex executable missing' }
@@ -71,9 +75,13 @@ try {
     $watcherProcess = Start-Process $copiedWatcher -ArgumentList @('--config', ('"{0}"' -f $watcherConfig)) -PassThru
     if (-not $watcherProcess.WaitForExit(15000)) { $watcherProcess.Kill(); throw 'Disabled watcher did not exit' }
     if ($watcherProcess.ExitCode -ne 0) { throw 'Disabled watcher failed' }
+    $watcherProcess.Dispose()
+    $watcherProcess = $null
     $watcherProcess = Start-Process $copiedWatcher -ArgumentList '--stop' -PassThru
     if (-not $watcherProcess.WaitForExit(15000)) { $watcherProcess.Kill(); throw 'Watcher stop timed out' }
     if ($watcherProcess.ExitCode -ne 0) { throw 'Watcher stop failed' }
+    $watcherProcess.Dispose()
+    $watcherProcess = $null
 
     foreach ($path in $registryPaths) {
         $key = $registry.CreateSubKey($path)
@@ -118,6 +126,8 @@ try {
         if ([DateTime]::UtcNow -gt $updateDeadline) { $process.Kill(); throw 'Silent update timeout' }
     }
     if ($process.ExitCode -ne 0) { throw 'Silent update failed' }
+    $process.Dispose()
+    $process = $null
     if (-not (Test-Path $executable)) { throw 'Silent update removed the installed application' }
     if ($liveWatcher.HasExited) { throw 'Silent update stopped the independently staged watcher' }
     if (-not (Test-Path $watcherConfig) -or (Get-FileHash $watcherConfig -Algorithm SHA256).Hash -ne $configHash) { throw 'Silent update changed the watcher configuration' }
@@ -135,10 +145,34 @@ try {
     if ($unexpectedOverlay) { throw 'Silent update unexpectedly launched the real application' }
     Write-Output 'Silent NSIS update preserved the running watcher, startup registration, settings and history without launching Electron'
 
+    # Record only this application's install registration before uninstall
+    # removes it. NSIS stores InstallLocation under Software\<its app GUID>.
+    $installRegistrations = @()
+    $uninstallRegistry = $registry.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Uninstall')
+    try {
+        foreach ($name in $uninstallRegistry.GetSubKeyNames()) {
+            $key = $uninstallRegistry.OpenSubKey($name)
+            try {
+                if ($key.GetValue('DisplayName') -eq 'Codex Usage Overlay') {
+                    $installKey = $registry.OpenSubKey("Software\$name")
+                    try {
+                        $installRegistrations += [ordered]@{
+                            key = $name
+                            installLocation = if ($installKey) { $installKey.GetValue('InstallLocation') } else { $null }
+                            uninstallCommand = $key.GetValue('UninstallString')
+                        }
+                    } finally { if ($installKey) { $installKey.Dispose() } }
+                }
+            } finally { $key.Dispose() }
+        }
+    } finally { $uninstallRegistry.Dispose() }
     $uninstaller = Get-ChildItem $directory -Filter 'Uninstall*.exe' | Select-Object -First 1
     $process = Start-Process $uninstaller.FullName -ArgumentList '/S' -PassThru
     if (-not $process.WaitForExit(60000)) { throw 'Uninstall timeout' }
     if ($process.ExitCode -ne 0) { throw 'Uninstaller failed' }
+    $uninstallExitCode = $process.ExitCode
+    $process.Dispose()
+    $process = $null
     # NSIS can run its actual uninstaller from a temporary child executable.
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     while ((Test-Path $executable) -or (Test-Path $autostartDirectory) -or (Test-OwnStartupRegistration)) {
@@ -148,10 +182,33 @@ try {
                 executableExists = Test-Path -LiteralPath $executable
                 autostartDirExists = Test-Path -LiteralPath $autostartDirectory
                 watcherHasExited = $liveWatcher.HasExited
-                uninstallExitCode = $process.ExitCode
+                uninstallExitCode = $uninstallExitCode
+                installDirectory = $directory
+                uninstallerPath = $uninstaller.FullName
+                installRegistrationBeforeUninstall = $installRegistrations
                 appDataEnvironment = $env:APPDATA
                 appDataKnownFolder = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
             }
+            $remaining = @(Get-ChildItem -LiteralPath $directory -Force -Recurse -File -ErrorAction SilentlyContinue)
+            $diagnostics['remainingFileCount'] = $remaining.Count
+            $diagnostics['remainingFiles'] = @($remaining | Select-Object -First 40 | ForEach-Object { $_.FullName.Substring($directory.Length).TrimStart('\') })
+            if (Test-Path -LiteralPath $executable -PathType Leaf) {
+                $remainingExecutable = Get-Item -LiteralPath $executable
+                $diagnostics['mainExecutable'] = @{ attributes = $remainingExecutable.Attributes.ToString(); size = $remainingExecutable.Length }
+                try {
+                    $probe = [IO.File]::Open($executable, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+                    try { $diagnostics['mainExclusiveRead'] = 'opened' }
+                    finally { $probe.Dispose() }
+                } catch { $diagnostics['mainExclusiveRead'] = $_.Exception.Message }
+            }
+            try {
+                # Keep same-basename processes even when Windows reports an
+                # equivalent 8.3 path, so an alias cannot hide a live image.
+                $matchingProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'Codex Usage Overlay.exe'" -OperationTimeoutSec 5 | Select-Object -First 8)
+                $diagnostics['matchingProcesses'] = @($matchingProcesses | ForEach-Object {
+                    @{ id = $_.ProcessId; path = $_.ExecutablePath; expectedPath = [StringComparer]::OrdinalIgnoreCase.Equals($_.ExecutablePath, $executable); commandLine = ([string]$_.CommandLine).Substring(0, [Math]::Min(512, ([string]$_.CommandLine).Length)) }
+                })
+            } catch { $diagnostics['matchingProcesses'] = 'CIM inspection unavailable: ' + $_.Exception.Message }
             foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)) {
                 $diagnosticRegistry = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $view)
                 try {
@@ -162,7 +219,7 @@ try {
                     }
                 } finally { $diagnosticRegistry.Dispose() }
             }
-            throw ('Uninstall did not remove application and startup files/registration: ' + ($diagnostics | ConvertTo-Json -Compress))
+            throw ('Uninstall did not remove application and startup files/registration: ' + ($diagnostics | ConvertTo-Json -Compress -Depth 6))
         }
         Start-Sleep -Milliseconds 100
     }
