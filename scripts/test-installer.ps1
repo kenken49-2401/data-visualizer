@@ -142,7 +142,28 @@ try {
     # NSIS can run its actual uninstaller from a temporary child executable.
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     while ((Test-Path $executable) -or (Test-Path $autostartDirectory) -or (Test-OwnStartupRegistration)) {
-        if ([DateTime]::UtcNow -gt $deadline) { throw 'Uninstall did not remove application and startup files/registration' }
+        if ([DateTime]::UtcNow -gt $deadline) {
+            $liveWatcher.Refresh()
+            $diagnostics = [ordered]@{
+                executableExists = Test-Path -LiteralPath $executable
+                autostartDirExists = Test-Path -LiteralPath $autostartDirectory
+                watcherHasExited = $liveWatcher.HasExited
+                uninstallExitCode = $process.ExitCode
+                appDataEnvironment = $env:APPDATA
+                appDataKnownFolder = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
+            }
+            foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)) {
+                $diagnosticRegistry = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $view)
+                try {
+                    foreach ($path in $registryPaths) {
+                        $key = $diagnosticRegistry.OpenSubKey($path)
+                        try { $diagnostics["$view/$path"] = [bool]($key -and $key.GetValueNames() -contains $runValue) }
+                        finally { if ($key) { $key.Dispose() } }
+                    }
+                } finally { $diagnosticRegistry.Dispose() }
+            }
+            throw ('Uninstall did not remove application and startup files/registration: ' + ($diagnostics | ConvertTo-Json -Compress))
+        }
         Start-Sleep -Milliseconds 100
     }
     if (-not $liveWatcher.WaitForExit(5000)) { throw 'Full uninstall left the copied watcher running' }
