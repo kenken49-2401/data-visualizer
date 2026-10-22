@@ -14,12 +14,15 @@ if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true' || !pr
   console.error('This native registry fixture runs only on Windows GitHub Actions with --synthetic-autostart');
   process.exit(1);
 }
-const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'Codex 自動起動 fixture '));
+// The parent runner owns removal after Chromium has fully closed its profile.
+// Removing userData while Electron/Crashpad still uses it can crash shutdown.
+const directory = process.env.WEB_AUTOSTART_SMOKE_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'Codex 自動起動 fixture '));
+fs.mkdirSync(directory, { recursive: true });
 app.setPath('userData', directory);
 app.disableHardwareAcceleration();
 const RUN = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const APPROVED = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';
-let manager, helper, timer, finishing = false;
+let manager, helper, timer, finishing = false, cleanupVerified = false;
 
 function registryValue(key) {
   try { return execFileSync('reg.exe', ['query', key, '/v', RUN_VALUE_NAME], { windowsHide: true, stdio: 'pipe', timeout: 5000 }); }
@@ -162,7 +165,8 @@ async function main() {
   assert.equal(registryValue(APPROVED), null, 'Turning off auto-start must remove its own StartupApproved entry');
   await waitFor(() => watcherCount() === 0, 'Turning off auto-start must stop the helper');
   assert.equal(JSON.parse(fs.readFileSync(manager.file, 'utf8')).enabled, false);
-  console.log('Real Electron auto-start integration passed: HKCU registration, Unicode quoting, native helper, StartupApproved opt-out, explicit re-enable and cleanup');
+  cleanupVerified = true;
+  console.log('Auto-start fixture: registration and cleanup assertions passed');
 }
 async function finish(error) {
   if (finishing) return;
@@ -174,19 +178,22 @@ async function finish(error) {
     console.error(detail);
     console.error('::error title=Real Electron auto-start::' + detail.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A'));
   }
-  if (manager) {
-    console.log('Auto-start fixture: cleanup starting');
+  console.log('Auto-start fixture: cleanup starting');
+  if (manager && !cleanupVerified) {
     try {
       const state = await manager.reconcile(false, { explicit: true });
       if (state.status !== 'disabled' || registryValue(RUN) !== null || registryValue(APPROVED) !== null) throw new Error('Auto-start fixture cleanup failed');
+      if (helper) await waitFor(() => watcherCount() === 0, 'Auto-start fixture cleanup left the native helper running');
+      cleanupVerified = true;
     } catch (cleanupError) {
       const detail = String(cleanupError.message).slice(-1000);
       console.error('::error title=Auto-start fixture cleanup::' + detail.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A'));
       failed = true;
     }
   }
-  try { fs.rmSync(directory, { recursive: true, force: true }); } catch { }
-  app.exit(failed ? 1 : 0);
+  process.exitCode = failed ? 1 : 0;
+  if (!failed) console.log('Real Electron auto-start integration passed: HKCU registration, Unicode quoting, native helper, StartupApproved opt-out, explicit re-enable and cleanup');
+  app.quit();
 }
 timer = setTimeout(() => { void finish(new Error('Real Electron auto-start integration timed out')); }, 65000);
 void main().then(() => finish()).catch(finish);
